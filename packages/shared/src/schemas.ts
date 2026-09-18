@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { INDUSTRIES, type IndustryKey } from "./industries";
+
+const industryKeys = INDUSTRIES.map((i) => i.key) as [IndustryKey, ...IndustryKey[]];
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Expected YYYY-MM-DD");
 
@@ -61,6 +64,7 @@ export const credentialTypeInputSchema = z.object({
 
 export const signUpSchema = z.object({
   organizationName: z.string().min(1, "Organization name is required").max(200),
+  industry: z.enum(industryKeys, { errorMap: () => ({ message: "Select an industry" }) }),
   fullName: z.string().min(1, "Your name is required").max(200),
   email: z.string().email(),
   password: z.string().min(8, "Password must be at least 8 characters"),

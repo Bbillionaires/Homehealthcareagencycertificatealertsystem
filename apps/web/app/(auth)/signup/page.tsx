@@ -2,6 +2,7 @@
 
 import { useFormState } from "react-dom";
 import Link from "next/link";
+import { INDUSTRIES } from "@compliance/shared";
 import { PasswordField } from "@/components/PasswordField";
 import { signUpAction, type ActionResult } from "../actions";
 
@@ -20,6 +21,30 @@ export default function SignUpPage() {
 
         <form action={formAction} className="mt-6 space-y-4">
           <Field id="organizationName" label="Organization name" type="text" />
+          <div>
+            <label htmlFor="industry" className="block text-sm font-medium text-slate-700">
+              Industry
+            </label>
+            <select
+              id="industry"
+              name="industry"
+              required
+              defaultValue=""
+              className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            >
+              <option value="" disabled>
+                Select your industry
+              </option>
+              {INDUSTRIES.map((industry) => (
+                <option key={industry.key} value={industry.key}>
+                  {industry.name}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-slate-400">
+              This sets up your first workspace. You can add more industry workspaces later.
+            </p>
+          </div>
           <Field id="fullName" label="Your name" type="text" />
           <Field id="email" label="Email" type="email" />
           <PasswordField

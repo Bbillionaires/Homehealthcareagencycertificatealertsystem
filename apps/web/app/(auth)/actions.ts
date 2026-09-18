@@ -17,6 +17,7 @@ export interface ActionResult {
 export async function signUpAction(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const parsed = signUpSchema.safeParse({
     organizationName: formData.get("organizationName"),
+    industry: formData.get("industry"),
     fullName: formData.get("fullName"),
     email: formData.get("email"),
     password: formData.get("password"),
@@ -26,7 +27,7 @@ export async function signUpAction(_prev: ActionResult, formData: FormData): Pro
     return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
-  const { organizationName, fullName, email, password } = parsed.data;
+  const { organizationName, industry, fullName, email, password } = parsed.data;
 
   const existing = await withDb((client) => client.query("SELECT id FROM users WHERE email = $1", [email]));
   if (existing.rows.length > 0) {
@@ -43,7 +44,7 @@ export async function signUpAction(_prev: ActionResult, formData: FormData): Pro
   const userId = userResult.rows[0].id;
 
   try {
-    await bootstrapOrganization({ organizationName, ownerUserId: userId });
+    await bootstrapOrganization({ organizationName, industry, ownerUserId: userId });
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Failed to set up your organization." };
   }
