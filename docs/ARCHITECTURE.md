@@ -361,17 +361,40 @@ RAILWAY_BUCKET_ACCESS_KEY_ID=
 RAILWAY_BUCKET_SECRET_ACCESS_KEY=
 ```
 
-A Railway project ("homehealthcare-compliance") with a Postgres service is
-now provisioned, and `db/migrations/0001_init.sql` and `0002_functions.sql`
-are applied to it (tracked in its own `schema_migrations` table, so
-`pnpm db:migrate` stays safe to re-run once the web app is deployed there
-too). Nothing else is deployed to that project yet -- the web app itself
-still needs a service (from this GitHub repo), its `DATABASE_URL` pointed
-at that Postgres (ideally via the least-privileged `app_user` role from
-`db/create_app_role.sql` rather than the owner connection the migration
-used), and the other variables below. `db/seed.sql` has not been run
-against it -- it's fictional demo data, meant for local dev/QA, not
-something to load into a real deployment without asking first.
+A Railway project ("homehealthcare-compliance") is now fully live:
+
+- **Postgres** service, migrated (`db/migrations/0001_init.sql` and
+  `0002_functions.sql`, tracked in `schema_migrations` so `pnpm db:migrate`
+  stays safe to re-run).
+- The least-privileged `app_user` role (`db/create_app_role.sql`) has been
+  created against it, so RLS is actually enforced for the deployed app
+  rather than bypassed by table ownership.
+- **web** service, deployed from this GitHub repo/branch. Build command
+  `pnpm install --frozen-lockfile && pnpm --filter @compliance/web build`;
+  start command `cd apps/web && npx next start -p $PORT` (a pnpm-filtered
+  `start -- -p $PORT` does not work here -- pnpm forwards the literal `--`
+  token through to Next's CLI, which then misreads it as the project
+  directory argument). Public domain:
+  `https://web-production-0337b.up.railway.app`. `DATABASE_URL` is the
+  `app_user` connection (built from `${{Postgres.PGHOST/PGPORT/PGDATABASE}}`
+  plus that role's own credentials, not a Railway reference to the owner
+  string); `JOB_DATABASE_URL` is `${{Postgres.DATABASE_URL}}` (the owner
+  connection, since the nightly cross-org notification job structurally
+  needs to bypass RLS); `CRON_SECRET` is set. `RESEND_API_KEY` and the
+  `RAILWAY_BUCKET_*` document-storage variables are still unset, so emails
+  log to the console instead of sending and the documents feature has no
+  bucket yet -- both are additive follow-ups, not required for the app to
+  run.
+- A leftover `db-migrate` Railway Function (used to apply the above against
+  the database, since Railway redacts `DATABASE_URL` from API/MCP access)
+  is still present but idle -- its deletion needs approval that hasn't been
+  granted yet.
+
+`db/seed.sql` has still not been run against it -- it's fictional demo
+data, meant for local dev/QA, not something to load into a real deployment
+without asking first. Right now the database has schema but no rows, so
+the app's own `/signup` flow is the way to create the first organization
+and admin user.
 
 ## 15. Business-Rule Decisions Made By Default (revisit if wrong)
 
