@@ -2,6 +2,7 @@
 
 import { useFormState } from "react-dom";
 import Link from "next/link";
+import { PasswordField } from "@/components/PasswordField";
 import { loginAction, type ActionResult } from "../actions";
 
 const initialState: ActionResult = {};
@@ -28,18 +29,7 @@ export default function LoginPage() {
               className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
           </div>
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-slate-700">
-              Password
-            </label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              required
-              className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-            />
-          </div>
+          <PasswordField id="password" name="password" label="Password" autoComplete="current-password" />
 
           {state.error && (
             <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">

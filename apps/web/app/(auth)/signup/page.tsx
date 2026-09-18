@@ -2,6 +2,7 @@
 
 import { useFormState } from "react-dom";
 import Link from "next/link";
+import { PasswordField } from "@/components/PasswordField";
 import { signUpAction, type ActionResult } from "../actions";
 
 const initialState: ActionResult = {};
@@ -21,7 +22,14 @@ export default function SignUpPage() {
           <Field id="organizationName" label="Organization name" type="text" />
           <Field id="fullName" label="Your name" type="text" />
           <Field id="email" label="Email" type="email" />
-          <Field id="password" label="Password" type="password" helpText="At least 8 characters." />
+          <PasswordField
+            id="password"
+            name="password"
+            label="Password"
+            minLength={8}
+            autoComplete="new-password"
+            helpText="At least 8 characters."
+          />
 
           {state.error && (
             <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
