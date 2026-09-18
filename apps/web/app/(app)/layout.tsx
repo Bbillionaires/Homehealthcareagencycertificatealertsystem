@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { requireOrgContext } from "@/lib/session";
+import { listWorkspaces } from "@/lib/workspaces";
+import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
 import { logoutAction } from "../(auth)/actions";
 
 const ADMIN_NAV = [
@@ -13,6 +15,7 @@ const ADMIN_NAV = [
 const OWNER_ONLY_NAV = [
   { href: "/audit-log", label: "Audit Log" },
   { href: "/settings/organization", label: "Settings" },
+  { href: "/settings/workspaces", label: "Industry Workspaces" },
   { href: "/settings/credential-types", label: "Credential Types" },
   { href: "/settings/positions", label: "Positions" },
 ];
@@ -28,6 +31,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const navItems = isAdmin
     ? [...ADMIN_NAV, ...(ctx.role === "owner" ? OWNER_ONLY_NAV : [])]
     : EMPLOYEE_NAV;
+  const workspaces = await listWorkspaces(ctx.userId, ctx.organizationId);
 
   return (
     <div className="flex min-h-screen">
@@ -38,6 +42,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             {ctx.role === "owner" ? "Owner" : ctx.role === "office_manager" ? "Office Manager" : "Employee"}
           </p>
         </div>
+        <WorkspaceSwitcher workspaces={workspaces} canAddWorkspace={ctx.role === "owner"} />
         <nav className="flex flex-col gap-1 p-3">
           {navItems.map((item) => (
             <Link

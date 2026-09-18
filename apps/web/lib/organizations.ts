@@ -77,24 +77,33 @@ export async function bootstrapOrganization(params: {
       [workspaceId, params.ownerUserId, workspaceAdminRoleId]
     );
 
-    for (const ct of DEFAULT_CREDENTIAL_TYPES) {
-      await client.query(
-        `INSERT INTO credential_types (
-           organization_id, workspace_id, key, name, category, renewal_interval_value,
-           renewal_interval_unit, requires_document, sort_order
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [
-          organizationId,
-          workspaceId,
-          ct.key,
-          ct.name,
-          ct.category,
-          ct.renewalIntervalValue,
-          ct.renewalIntervalUnit,
-          ct.requiresDocument,
-          ct.sortOrder,
-        ]
-      );
+    // DEFAULT_CREDENTIAL_TYPES (CPR, HIPAA, background checks, ...) are
+    // healthcare-specific -- seeding them for e.g. a new Transportation
+    // workspace would misrepresent healthcare items as that industry's
+    // requirements. Only Healthcare gets them; every other industry
+    // starts with an empty, admin-configurable requirement catalog
+    // until a real, sourced template exists for it (see docs/ARCHITECTURE.md
+    // §16 -- never invent regulatory requirements).
+    if (industry.key === "healthcare") {
+      for (const ct of DEFAULT_CREDENTIAL_TYPES) {
+        await client.query(
+          `INSERT INTO credential_types (
+             organization_id, workspace_id, key, name, category, renewal_interval_value,
+             renewal_interval_unit, requires_document, sort_order
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            organizationId,
+            workspaceId,
+            ct.key,
+            ct.name,
+            ct.category,
+            ct.renewalIntervalValue,
+            ct.renewalIntervalUnit,
+            ct.requiresDocument,
+            ct.sortOrder,
+          ]
+        );
+      }
     }
 
     await recordAuditLog(client, {

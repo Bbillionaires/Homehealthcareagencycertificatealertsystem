@@ -27,11 +27,17 @@ export interface EmployeeWithCompliance {
  * Loads every active/on-leave employee in the org plus their compliance
  * roll-up. Terminated and inactive employees are excluded by default (they
  * still exist for historical search, just not in active compliance views).
+ *
+ * Pass `workspaceId` to scope to one industry workspace's positions
+ * (an employee with no position in that workspace has no requirements
+ * and shows as fully compliant, same as an employee with no position at
+ * all today); omit it for the org-wide "All Workspaces" view, which is
+ * every page's default until Phase 2's per-workspace pages exist.
  */
 export async function getOrgComplianceRoster(
   userId: string,
   organizationId: string,
-  options: { includeInactive?: boolean } = {}
+  options: { includeInactive?: boolean; workspaceId?: string } = {}
 ): Promise<EmployeeWithCompliance[]> {
   return withUserContext(userId, (client) => loadRoster(client, organizationId, options));
 }
@@ -39,7 +45,7 @@ export async function getOrgComplianceRoster(
 async function loadRoster(
   client: PoolClient,
   organizationId: string,
-  options: { includeInactive?: boolean }
+  options: { includeInactive?: boolean; workspaceId?: string }
 ): Promise<EmployeeWithCompliance[]> {
   const thresholds = await loadThresholds(client, organizationId);
 
@@ -72,7 +78,7 @@ async function loadRoster(
 
   const employeeIds = employeeResult.rows.map((e) => e.id);
 
-  const requirementsByPosition = await loadRequirementsByPosition(client, organizationId);
+  const requirementsByPosition = await loadRequirementsByPosition(client, organizationId, options.workspaceId);
   const credentialsByEmployee = await loadActiveCredentialsByEmployee(client, organizationId, employeeIds);
 
   return employeeResult.rows.map((employee) => {
@@ -112,8 +118,13 @@ async function loadThresholds(client: PoolClient, organizationId: string): Promi
 
 async function loadRequirementsByPosition(
   client: PoolClient,
-  organizationId: string
+  organizationId: string,
+  workspaceId?: string
 ): Promise<Map<string, RequirementInput[]>> {
+  // workspaceId narrows to that workspace's positions only, for the
+  // per-workspace dashboard (see getOrgComplianceRoster's doc comment --
+  // this doesn't remove any employee from the roster, only which
+  // requirements count toward their compliance status).
   const result = await client.query<{
     position_id: string;
     is_required: boolean;
@@ -126,8 +137,9 @@ async function loadRequirementsByPosition(
             ct.name AS credential_type_name, ct.warning_yellow_threshold_days, ct.warning_orange_threshold_days
      FROM position_requirements pr
      JOIN credential_types ct ON ct.id = pr.credential_type_id
-     WHERE pr.organization_id = $1 AND ct.is_active`,
-    [organizationId]
+     WHERE pr.organization_id = $1 AND ct.is_active
+       AND ($2::uuid IS NULL OR pr.workspace_id = $2)`,
+    [organizationId, workspaceId ?? null]
   );
 
   const map = new Map<string, RequirementInput[]>();
