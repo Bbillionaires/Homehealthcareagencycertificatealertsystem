@@ -22,7 +22,12 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (hasSession && (request.nextUrl.pathname === "/login" || request.nextUrl.pathname === "/signup")) {
+  // Only bounce an already-authenticated visitor away from /login -- not
+  // /signup. requireOrgContext sends a signed-in user with no active
+  // organization membership to /signup (see lib/session.ts); bouncing them
+  // straight back to /dashboard from there would loop the two redirects
+  // forever.
+  if (hasSession && request.nextUrl.pathname === "/login") {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
