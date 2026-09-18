@@ -361,10 +361,17 @@ RAILWAY_BUCKET_ACCESS_KEY_ID=
 RAILWAY_BUCKET_SECRET_ACCESS_KEY=
 ```
 
-No live Railway project is provisioned yet. `db/migrations` and
-`db/seed.sql` are ready to apply the moment one is connected: set
-`DATABASE_URL` to the Postgres service's connection string and run
-`pnpm db:migrate` (and, for local dev only, `pnpm db:seed`).
+A Railway project ("homehealthcare-compliance") with a Postgres service is
+now provisioned, and `db/migrations/0001_init.sql` and `0002_functions.sql`
+are applied to it (tracked in its own `schema_migrations` table, so
+`pnpm db:migrate` stays safe to re-run once the web app is deployed there
+too). Nothing else is deployed to that project yet -- the web app itself
+still needs a service (from this GitHub repo), its `DATABASE_URL` pointed
+at that Postgres (ideally via the least-privileged `app_user` role from
+`db/create_app_role.sql` rather than the owner connection the migration
+used), and the other variables below. `db/seed.sql` has not been run
+against it -- it's fictional demo data, meant for local dev/QA, not
+something to load into a real deployment without asking first.
 
 ## 15. Business-Rule Decisions Made By Default (revisit if wrong)
 
