@@ -114,6 +114,29 @@ export async function getDefaultWorkspace(userId: string, organizationId: string
 }
 
 /**
+ * Maps each position to the workspace it belongs to, for rolling an
+ * org-wide employee roster up into a per-workspace breakdown (the "All
+ * Workspaces" consolidated view -- see docs/ARCHITECTURE.md §16). An
+ * employee with no position, or a position with no workspace_id (not
+ * yet backfilled), has no entry and is simply left out of every
+ * workspace's row -- they still count in the org-wide totals shown
+ * above the breakdown.
+ */
+export async function getPositionWorkspaceMap(userId: string, organizationId: string): Promise<Map<string, string>> {
+  return withUserContext(userId, async (client) => {
+    const result = await client.query<{ id: string; workspace_id: string | null }>(
+      "SELECT id, workspace_id FROM positions WHERE organization_id = $1",
+      [organizationId]
+    );
+    const map = new Map<string, string>();
+    for (const row of result.rows) {
+      if (row.workspace_id) map.set(row.id, row.workspace_id);
+    }
+    return map;
+  });
+}
+
+/**
  * Adds a new industry workspace to an existing organization (Settings ->
  * Industry Workspaces -> Add Workspace) -- same shape as the workspace
  * bootstrapOrganization creates at signup (lib/organizations.ts), minus
