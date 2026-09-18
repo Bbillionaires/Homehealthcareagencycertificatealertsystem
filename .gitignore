@@ -19,3 +19,4 @@ android/
 .vercel/
 supabase/.branches/
 supabase/.temp/
+*.tsbuildinfo
