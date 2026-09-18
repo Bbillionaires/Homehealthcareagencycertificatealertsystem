@@ -386,9 +386,16 @@ A Railway project ("homehealthcare-compliance") is now fully live:
   references (`${{documents.ENDPOINT}}`, `${{documents.BUCKET}}`,
   `${{documents.ACCESS_KEY_ID}}`, `${{documents.SECRET_ACCESS_KEY}}`,
   `${{documents.REGION}}`), so Phase 6 document upload/download is live.
-  `RESEND_API_KEY` is still unset, so emails (password reset,
-  notifications) log to the console instead of sending -- an additive
-  follow-up, not required for the app to run.
+- **Email (Resend)**: `RESEND_API_KEY` and `EMAIL_FROM` are set
+  (`Compliance Platform <no-reply@qualifystaff.com>`), sending-access key
+  scoped to the `qualifystaff.com` domain. **That domain is added to
+  Resend but not yet DNS-verified** -- its DKIM/SPF/MX records need to be
+  added at the registrar (Vercel, per the user) before Resend will
+  actually accept sends from it. Until verification completes,
+  `lib/email.ts`'s `sendEmail()` no longer takes its no-`RESEND_API_KEY`
+  console-log fallback (a key is now set), so password-reset and
+  notification emails will throw instead of silently logging. Re-run
+  domain verification once the DNS records have propagated.
 - A leftover `db-migrate` Railway Function (used to apply the above against
   the database, since Railway redacts `DATABASE_URL` from API/MCP access)
   is still present but idle -- its deletion needs approval that hasn't been
