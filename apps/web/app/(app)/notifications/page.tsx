@@ -1,22 +1,33 @@
 import { requireOrgContext } from "@/lib/session";
-import { createClient } from "@/lib/supabase/server";
+import { withUserContext } from "@/lib/db/context";
 
 export default async function NotificationsPage() {
   const ctx = await requireOrgContext();
-  const supabase = await createClient();
 
-  const { data: notifications } = await supabase
-    .from("notifications")
-    .select("id, title, body, severity, is_read, created_at")
-    .eq("recipient_user_id", ctx.userId)
-    .order("created_at", { ascending: false })
-    .limit(50);
+  const notifications = await withUserContext(ctx.userId, async (client) => {
+    const result = await client.query<{
+      id: string;
+      title: string;
+      body: string;
+      severity: string;
+      is_read: boolean;
+      created_at: string;
+    }>(
+      `SELECT id, title, body, severity, is_read, created_at
+       FROM notifications
+       WHERE recipient_user_id = $1
+       ORDER BY created_at DESC
+       LIMIT 50`,
+      [ctx.userId]
+    );
+    return result.rows;
+  });
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold text-slate-900">Notifications</h1>
 
-      {!notifications || notifications.length === 0 ? (
+      {notifications.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">
           You have no notifications yet. You&apos;ll see expiration warnings and renewal confirmations here as soon as the notification job (Phase 7) is wired up.
         </div>

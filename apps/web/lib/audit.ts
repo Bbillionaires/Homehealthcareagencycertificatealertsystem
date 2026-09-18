@@ -1,5 +1,4 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/lib/database.types";
+import type { PoolClient } from "pg";
 
 interface AuditEntry {
   organizationId: string;
@@ -13,26 +12,28 @@ interface AuditEntry {
   metadata?: Record<string, unknown> | null;
 }
 
-/** Every mutation that touches employee/credential data should call this in the same request. */
-export async function recordAuditLog(
-  supabase: SupabaseClient<Database>,
-  entry: AuditEntry
-) {
-  const { error } = await supabase.from("audit_logs").insert({
-    organization_id: entry.organizationId,
-    actor_user_id: entry.actorUserId,
-    action: entry.action,
-    entity_type: entry.entityType,
-    entity_id: entry.entityId ?? null,
-    affected_employee_id: entry.affectedEmployeeId ?? null,
-    previous_value: entry.previousValue ?? null,
-    new_value: entry.newValue ?? null,
-    metadata: entry.metadata ?? null,
-  });
-
-  if (error) {
-    // Audit logging must never silently vanish; surface it so the calling
-    // action can decide whether to roll back / report failure.
-    throw new Error(`Failed to write audit log: ${error.message}`);
-  }
+/**
+ * Every mutation that touches employee/credential data should call this
+ * with the SAME client (and therefore the same transaction) it used for
+ * the mutation itself, so the audit entry can never succeed without the
+ * change it's describing, or vice versa.
+ */
+export async function recordAuditLog(client: PoolClient, entry: AuditEntry): Promise<void> {
+  await client.query(
+    `INSERT INTO audit_logs (
+       organization_id, actor_user_id, action, entity_type, entity_id,
+       affected_employee_id, previous_value, new_value, metadata
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [
+      entry.organizationId,
+      entry.actorUserId,
+      entry.action,
+      entry.entityType,
+      entry.entityId ?? null,
+      entry.affectedEmployeeId ?? null,
+      entry.previousValue ? JSON.stringify(entry.previousValue) : null,
+      entry.newValue ? JSON.stringify(entry.newValue) : null,
+      entry.metadata ? JSON.stringify(entry.metadata) : null,
+    ]
+  );
 }

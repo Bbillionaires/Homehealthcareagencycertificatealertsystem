@@ -5,9 +5,8 @@ import {
   type EmployeeComplianceResult,
   type RequirementInput,
 } from "@compliance/shared";
-import type { createClient } from "@/lib/supabase/server";
-
-type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
+import type { PoolClient } from "pg";
+import { withUserContext } from "@/lib/db/context";
 
 export interface EmployeeWithCompliance {
   id: string;
@@ -28,98 +27,55 @@ export interface EmployeeWithCompliance {
  * still exist for historical search, just not in active compliance views).
  */
 export async function getOrgComplianceRoster(
-  supabase: SupabaseServerClient,
+  userId: string,
   organizationId: string,
   options: { includeInactive?: boolean } = {}
 ): Promise<EmployeeWithCompliance[]> {
-  const { data: settings } = await supabase
-    .from("organization_settings")
-    .select("compliance_yellow_threshold_days, compliance_orange_threshold_days")
-    .eq("organization_id", organizationId)
-    .maybeSingle();
+  return withUserContext(userId, (client) => loadRoster(client, organizationId, options));
+}
 
-  const thresholds: ComplianceThresholds = settings
-    ? {
-        yellowThresholdDays: settings.compliance_yellow_threshold_days,
-        orangeThresholdDays: settings.compliance_orange_threshold_days,
-      }
-    : DEFAULT_COMPLIANCE_THRESHOLDS;
+async function loadRoster(
+  client: PoolClient,
+  organizationId: string,
+  options: { includeInactive?: boolean }
+): Promise<EmployeeWithCompliance[]> {
+  const thresholds = await loadThresholds(client, organizationId);
 
-  let employeeQuery = supabase
-    .from("employees")
-    .select("id, employee_number, first_name, last_name, preferred_name, date_of_hire, employment_status, position_id, positions(name), departments(name)")
-    .eq("organization_id", organizationId)
-    .order("last_name", { ascending: true });
+  const employeeResult = await client.query<{
+    id: string;
+    employee_number: string;
+    first_name: string;
+    last_name: string;
+    preferred_name: string | null;
+    date_of_hire: string;
+    employment_status: string;
+    position_id: string | null;
+    position_name: string | null;
+    department_name: string | null;
+  }>(
+    `SELECT e.id, e.employee_number, e.first_name, e.last_name, e.preferred_name,
+            e.date_of_hire, e.employment_status, e.position_id,
+            p.name AS position_name, d.name AS department_name
+     FROM employees e
+     LEFT JOIN positions p ON p.id = e.position_id
+     LEFT JOIN departments d ON d.id = e.department_id
+     WHERE e.organization_id = $1
+       AND ($2::boolean OR e.employment_status IN ('active', 'leave'))
+     ORDER BY e.last_name ASC`,
+    [organizationId, options.includeInactive ?? false]
+  );
 
-  if (!options.includeInactive) {
-    employeeQuery = employeeQuery.in("employment_status", ["active", "leave"]);
-  }
+  if (employeeResult.rows.length === 0) return [];
 
-  const { data: employees, error: employeesError } = await employeeQuery;
-  if (employeesError) throw new Error(employeesError.message);
-  if (!employees || employees.length === 0) return [];
+  const employeeIds = employeeResult.rows.map((e) => e.id);
 
-  const employeeIds = employees.map((e) => e.id);
+  const requirementsByPosition = await loadRequirementsByPosition(client, organizationId);
+  const credentialsByEmployee = await loadActiveCredentialsByEmployee(client, organizationId, employeeIds);
 
-  const { data: requirementRows, error: reqError } = await supabase
-    .from("position_requirements")
-    .select("position_id, is_required, credential_type_id, credential_types(id, name, is_active, warning_yellow_threshold_days, warning_orange_threshold_days)")
-    .eq("organization_id", organizationId);
-  if (reqError) throw new Error(reqError.message);
-
-  const requirementsByPosition = new Map<string, RequirementInput[]>();
-  for (const row of requirementRows ?? []) {
-    const credentialType = row.credential_types as unknown as {
-      id: string;
-      name: string;
-      is_active: boolean;
-      warning_yellow_threshold_days: number | null;
-      warning_orange_threshold_days: number | null;
-    } | null;
-    if (!credentialType || !credentialType.is_active || !row.position_id) continue;
-
-    const list = requirementsByPosition.get(row.position_id) ?? [];
-    list.push({
-      credentialTypeId: row.credential_type_id,
-      credentialTypeName: credentialType.name,
-      isRequired: row.is_required,
-      thresholds:
-        credentialType.warning_yellow_threshold_days != null || credentialType.warning_orange_threshold_days != null
-          ? {
-              yellowThresholdDays: credentialType.warning_yellow_threshold_days ?? undefined,
-              orangeThresholdDays: credentialType.warning_orange_threshold_days ?? undefined,
-            }
-          : undefined,
-    });
-    requirementsByPosition.set(row.position_id, list);
-  }
-
-  const { data: credentialRows, error: credError } = await supabase
-    .from("employee_credentials")
-    .select("employee_id, credential_type_id, completion_date, expiration_date")
-    .eq("organization_id", organizationId)
-    .eq("status", "active")
-    .in("employee_id", employeeIds);
-  if (credError) throw new Error(credError.message);
-
-  const credentialsByEmployee = new Map<string, { credentialTypeId: string; completionDate: string | null; expirationDate: string | null }[]>();
-  for (const row of credentialRows ?? []) {
-    const list = credentialsByEmployee.get(row.employee_id) ?? [];
-    list.push({
-      credentialTypeId: row.credential_type_id,
-      completionDate: row.completion_date,
-      expirationDate: row.expiration_date,
-    });
-    credentialsByEmployee.set(row.employee_id, list);
-  }
-
-  return employees.map((employee) => {
+  return employeeResult.rows.map((employee) => {
     const requirements = employee.position_id ? requirementsByPosition.get(employee.position_id) ?? [] : [];
     const records = credentialsByEmployee.get(employee.id) ?? [];
     const compliance = calculateEmployeeCompliance(requirements, records, thresholds);
-
-    const position = employee.positions as unknown as { name: string } | null;
-    const department = employee.departments as unknown as { name: string } | null;
 
     return {
       id: employee.id,
@@ -129,11 +85,94 @@ export async function getOrgComplianceRoster(
       preferredName: employee.preferred_name,
       dateOfHire: employee.date_of_hire,
       employmentStatus: employee.employment_status,
-      positionName: position?.name ?? null,
-      departmentName: department?.name ?? null,
+      positionName: employee.position_name,
+      departmentName: employee.department_name,
       compliance,
     };
   });
+}
+
+async function loadThresholds(client: PoolClient, organizationId: string): Promise<ComplianceThresholds> {
+  const result = await client.query<{
+    compliance_yellow_threshold_days: number;
+    compliance_orange_threshold_days: number;
+  }>("SELECT compliance_yellow_threshold_days, compliance_orange_threshold_days FROM organization_settings WHERE organization_id = $1", [
+    organizationId,
+  ]);
+  const row = result.rows[0];
+  return row
+    ? { yellowThresholdDays: row.compliance_yellow_threshold_days, orangeThresholdDays: row.compliance_orange_threshold_days }
+    : DEFAULT_COMPLIANCE_THRESHOLDS;
+}
+
+async function loadRequirementsByPosition(
+  client: PoolClient,
+  organizationId: string
+): Promise<Map<string, RequirementInput[]>> {
+  const result = await client.query<{
+    position_id: string;
+    is_required: boolean;
+    credential_type_id: string;
+    credential_type_name: string;
+    warning_yellow_threshold_days: number | null;
+    warning_orange_threshold_days: number | null;
+  }>(
+    `SELECT pr.position_id, pr.is_required, pr.credential_type_id,
+            ct.name AS credential_type_name, ct.warning_yellow_threshold_days, ct.warning_orange_threshold_days
+     FROM position_requirements pr
+     JOIN credential_types ct ON ct.id = pr.credential_type_id
+     WHERE pr.organization_id = $1 AND ct.is_active`,
+    [organizationId]
+  );
+
+  const map = new Map<string, RequirementInput[]>();
+  for (const row of result.rows) {
+    const list = map.get(row.position_id) ?? [];
+    list.push({
+      credentialTypeId: row.credential_type_id,
+      credentialTypeName: row.credential_type_name,
+      isRequired: row.is_required,
+      thresholds:
+        row.warning_yellow_threshold_days != null || row.warning_orange_threshold_days != null
+          ? {
+              yellowThresholdDays: row.warning_yellow_threshold_days ?? undefined,
+              orangeThresholdDays: row.warning_orange_threshold_days ?? undefined,
+            }
+          : undefined,
+    });
+    map.set(row.position_id, list);
+  }
+  return map;
+}
+
+async function loadActiveCredentialsByEmployee(
+  client: PoolClient,
+  organizationId: string,
+  employeeIds: string[]
+): Promise<Map<string, { credentialTypeId: string; completionDate: string | null; expirationDate: string | null }[]>> {
+  const result = await client.query<{
+    employee_id: string;
+    credential_type_id: string;
+    completion_date: string | null;
+    expiration_date: string | null;
+  }>(
+    `SELECT employee_id, credential_type_id, completion_date, expiration_date
+     FROM employee_credentials
+     WHERE organization_id = $1 AND status = 'active' AND employee_id = ANY($2::uuid[])`,
+    [organizationId, employeeIds]
+  );
+
+  const map = new Map<string, { credentialTypeId: string; completionDate: string | null; expirationDate: string | null }[]>();
+  for (const row of result.rows) {
+    const list = map.get(row.employee_id) ?? [];
+    list.push({
+      credentialTypeId: row.credential_type_id,
+      completionDate: row.completion_date,
+      expirationDate: row.expiration_date,
+    });
+    map.set(row.employee_id, list);
+  }
+  return map;
 }
 
 export interface DashboardCounts {

@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { employeeInputSchema } from "@compliance/shared";
-import { createClient } from "@/lib/supabase/server";
+import { withUserContext } from "@/lib/db/context";
 import { requireOrgContext } from "@/lib/session";
 import { recordAuditLog } from "@/lib/audit";
 
@@ -36,46 +36,55 @@ export async function createEmployeeAction(_prev: ActionResult, formData: FormDa
   }
 
   const input = parsed.data;
-  const supabase = await createClient();
 
-  const { data: employee, error } = await supabase
-    .from("employees")
-    .insert({
-      organization_id: ctx.organizationId,
-      employee_number: input.employeeNumber,
-      first_name: input.firstName,
-      middle_name: input.middleName || null,
-      last_name: input.lastName,
-      preferred_name: input.preferredName || null,
-      date_of_hire: input.dateOfHire,
-      position_id: input.positionId ?? null,
-      department_id: input.departmentId ?? null,
-      employment_status: input.employmentStatus,
-      phone: input.phone || null,
-      email: input.email || null,
-      notes: input.notes || null,
-      created_by: ctx.userId,
-      updated_by: ctx.userId,
-    })
-    .select("id")
-    .single();
+  let employeeId: string;
+  try {
+    employeeId = await withUserContext(ctx.userId, async (client) => {
+      const result = await client.query<{ id: string }>(
+        `INSERT INTO employees (
+           organization_id, employee_number, first_name, middle_name, last_name,
+           preferred_name, date_of_hire, position_id, department_id, employment_status,
+           phone, email, notes, created_by, updated_by
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
+         RETURNING id`,
+        [
+          ctx.organizationId,
+          input.employeeNumber,
+          input.firstName,
+          input.middleName || null,
+          input.lastName,
+          input.preferredName || null,
+          input.dateOfHire,
+          input.positionId ?? null,
+          input.departmentId ?? null,
+          input.employmentStatus,
+          input.phone || null,
+          input.email || null,
+          input.notes || null,
+          ctx.userId,
+        ]
+      );
+      const id = result.rows[0].id;
 
-  if (error || !employee) {
-    if (error?.code === "23505") {
+      await recordAuditLog(client, {
+        organizationId: ctx.organizationId,
+        actorUserId: ctx.userId,
+        action: "employee.created",
+        entityType: "employee",
+        entityId: id,
+        affectedEmployeeId: id,
+        newValue: { employeeNumber: input.employeeNumber, firstName: input.firstName, lastName: input.lastName },
+      });
+
+      return id;
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to create employee.";
+    if (message.includes("employees_organization_id_employee_number_key")) {
       return { error: `Employee ID "${input.employeeNumber}" is already in use.` };
     }
-    return { error: error?.message ?? "Failed to create employee." };
+    return { error: message };
   }
 
-  await recordAuditLog(supabase, {
-    organizationId: ctx.organizationId,
-    actorUserId: ctx.userId,
-    action: "employee.created",
-    entityType: "employee",
-    entityId: employee.id,
-    affectedEmployeeId: employee.id,
-    newValue: { employeeNumber: input.employeeNumber, firstName: input.firstName, lastName: input.lastName },
-  });
-
-  redirect(`/employees/${employee.id}`);
+  redirect(`/employees/${employeeId}`);
 }

@@ -2,8 +2,11 @@
 
 import { redirect } from "next/navigation";
 import { signUpSchema, loginSchema } from "@compliance/shared";
-import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { withDb } from "@/lib/db/context";
+import { hashPassword, verifyPassword } from "@/lib/auth/password";
+import { createSession, destroySession } from "@/lib/auth/session";
+import { createPasswordResetToken, consumePasswordResetToken } from "@/lib/auth/passwordReset";
+import { sendPasswordResetEmail } from "@/lib/auth/email";
 import { bootstrapOrganization } from "@/lib/organizations";
 
 export interface ActionResult {
@@ -24,31 +27,28 @@ export async function signUpAction(_prev: ActionResult, formData: FormData): Pro
   }
 
   const { organizationName, fullName, email, password } = parsed.data;
-  const supabase = await createClient();
 
-  const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-    email,
-    password,
-    options: { data: { full_name: fullName } },
-  });
+  const existing = await withDb((client) => client.query("SELECT id FROM users WHERE email = $1", [email]));
+  if (existing.rows.length > 0) {
+    return { error: "An account with that email already exists." };
+  }
 
-  if (signUpError) {
-    return { error: signUpError.message };
-  }
-  if (!signUpData.user) {
-    return { error: "Could not create your account. Please try again." };
-  }
+  const passwordHash = await hashPassword(password);
+  const userResult = await withDb((client) =>
+    client.query<{ id: string }>(
+      "INSERT INTO users (email, password_hash, full_name) VALUES ($1, $2, $3) RETURNING id",
+      [email, passwordHash, fullName]
+    )
+  );
+  const userId = userResult.rows[0].id;
 
   try {
-    const admin = createAdminClient();
-    await bootstrapOrganization(admin, {
-      organizationName,
-      ownerUserId: signUpData.user.id,
-    });
+    await bootstrapOrganization({ organizationName, ownerUserId: userId });
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Failed to set up your organization." };
   }
 
+  await createSession(userId);
   redirect("/dashboard");
 }
 
@@ -62,19 +62,25 @@ export async function loginAction(_prev: ActionResult, formData: FormData): Prom
     return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
-  const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword(parsed.data);
+  const { email, password } = parsed.data;
 
-  if (error) {
+  const result = await withDb((client) =>
+    client.query<{ id: string; password_hash: string }>("SELECT id, password_hash FROM users WHERE email = $1", [
+      email,
+    ])
+  );
+  const user = result.rows[0];
+
+  if (!user || !(await verifyPassword(password, user.password_hash))) {
     return { error: "Incorrect email or password." };
   }
 
+  await createSession(user.id);
   redirect("/dashboard");
 }
 
 export async function logoutAction() {
-  const supabase = await createClient();
-  await supabase.auth.signOut();
+  await destroySession();
   redirect("/login");
 }
 
@@ -82,29 +88,33 @@ export async function requestPasswordResetAction(_prev: ActionResult, formData: 
   const email = String(formData.get("email") ?? "");
   if (!email) return { error: "Email is required" };
 
-  const supabase = await createClient();
-  const redirectTo = `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/reset-password/confirm`;
-  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+  const result = await withDb((client) => client.query<{ id: string }>("SELECT id FROM users WHERE email = $1", [email]));
+  const user = result.rows[0];
 
-  if (error) {
-    return { error: error.message };
+  // Deliberately the same response whether or not the account exists,
+  // to avoid leaking which emails are registered.
+  if (user) {
+    const token = await createPasswordResetToken(user.id);
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    const resetUrl = `${appUrl}/reset-password/confirm?token=${token}`;
+    await sendPasswordResetEmail(email, resetUrl);
   }
 
   return { success: true };
 }
 
 export async function updatePasswordAction(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  const token = String(formData.get("token") ?? "");
   const password = String(formData.get("password") ?? "");
-  if (password.length < 8) {
-    return { error: "Password must be at least 8 characters" };
+
+  if (!token) return { error: "This reset link is missing its token." };
+  if (password.length < 8) return { error: "Password must be at least 8 characters" };
+
+  const userId = await consumePasswordResetToken(token, password);
+  if (!userId) {
+    return { error: "This reset link is invalid or has expired. Request a new one." };
   }
 
-  const supabase = await createClient();
-  const { error } = await supabase.auth.updateUser({ password });
-
-  if (error) {
-    return { error: error.message };
-  }
-
+  await createSession(userId);
   redirect("/dashboard");
 }

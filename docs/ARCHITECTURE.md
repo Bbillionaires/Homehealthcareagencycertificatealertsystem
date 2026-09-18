@@ -12,47 +12,69 @@ compliance-platform/
 │   ├── web/          Next.js 14 (App Router) + TypeScript + Tailwind
 │   └── mobile/        Expo (React Native) + TypeScript          [Phase 9]
 ├── packages/
-│   ├── shared/        Compliance engine, Zod schemas, shared types,
-│   │                  formatting helpers — imported by web, mobile, jobs
-│   └── database/      Generated Supabase types, query helpers
-├── supabase/
+│   └── shared/        Compliance engine, Zod schemas, shared types,
+│                       formatting helpers — imported by web, mobile, jobs
+├── db/
 │   ├── migrations/     SQL migrations (source of truth for schema)
-│   ├── functions/      Edge Functions: daily compliance job, notification
-│   │                  dispatch                                 [Phase 4/7]
-│   └── seed.sql        Demo data
+│   ├── create_app_role.sql  One-time least-privilege Postgres role setup
+│   └── seed.sql        Local dev demo data
 └── docs/
 ```
 
-- **Backend**: Supabase (Postgres 17 + Auth + Storage + Row Level Security).
-  No separate REST/GraphQL server — Next.js Route Handlers / Server Actions
-  and the mobile app both talk to Supabase directly (via the anon key +
-  RLS) or through thin Route Handlers when server-only logic (compliance
-  calculation, audit logging, cross-record renewal transactions) is
-  required. This keeps one authorization surface (Postgres RLS) instead of
-  duplicating auth checks in an app server.
-- **Database**: Postgres via Supabase, multi-tenant, RLS-enforced.
-- **Auth**: Supabase Auth (email/password, password reset, session via
-  httpOnly cookies on web / secure storage on mobile).
-- **Storage**: Supabase Storage, private buckets, signed URLs only.
+- **Backend**: a Railway Postgres service, talked to directly from Next.js
+  Route Handlers / Server Actions via `pg` (no ORM, no separate REST/GraphQL
+  server) — there is no hosted backend-as-a-service product in the loop.
+  The mobile app (Phase 9) will go through the same Next.js server rather
+  than connecting to Postgres itself, since it has no way to hold a raw
+  `pg` connection or enforce the session model below.
+- **Database**: plain Postgres 17 on Railway, multi-tenant, RLS-enforced
+  (see §2 for how RLS works without a hosted auth product in front of it).
+- **Auth**: self-hosted — `users`/`sessions`/`password_reset_tokens` tables
+  (§2), scrypt password hashing (`lib/auth/password.ts`), opaque
+  session tokens in an httpOnly cookie (`lib/auth/session.ts`), password
+  reset emailed via Resend (falls back to a server-console log locally).
+- **Storage**: a Railway bucket (S3-compatible object storage), private,
+  accessed only via server-generated presigned URLs — same access
+  pattern Supabase Storage would have given us, just via
+  `@aws-sdk/client-s3` against Railway's S3-compatible endpoint instead
+  of the Supabase client. Wired up in Phase 6 alongside the rest of
+  document management; not needed for Phase 1.
 - **Compliance engine**: pure, framework-free functions in
   `packages/shared/src/compliance`, unit-tested, used identically by web
   pages, mobile screens, the nightly job, and report generation — the one
-  place status logic lives.
-- **Background jobs**: Supabase Edge Functions on a cron schedule (daily
-  compliance recalculation + notification dispatch), calling the same
-  shared compliance engine.
+  place status logic lives. Entirely database-agnostic, so this backend
+  swap touched zero lines of it.
+- **Background jobs**: a scheduled Railway service (cron-triggered deploy,
+  or a long-running worker with an internal scheduler) running the daily
+  compliance recalculation + notification dispatch, calling the same
+  shared compliance engine. (There is no Supabase Edge Functions
+  equivalent to lean on; this is plain Node.)
 - **Notifications**: `notifications` table (in-app) + email via a
   transactional provider (Resend) triggered from the same job; push/SMS
   are additive channels on the same table (see §7).
+- **Migrations**: no CLI/hosted migration product either — `db/migrations/*.sql`
+  are applied in order by `apps/web/scripts/migrate.mjs` (`pnpm db:migrate`),
+  which tracks what's already run in a `schema_migrations` table so
+  re-running is a no-op.
 
 ## 2. Multi-Organization / Tenant Isolation
 
 Every business table has `organization_id uuid not null references organizations(id)`.
 Isolation is enforced in Postgres via Row Level Security, not just in
-application code:
+application code -- but RLS has no JWT/PostgREST layer to read a caller's
+identity from here the way it would with Supabase, so the app sets it
+explicitly:
 
+- Every request that touches an org-scoped table runs inside
+  `withUserContext(userId, ...)` (`lib/db/context.ts`), which opens a
+  transaction and runs `select set_config('app.current_user_id', $1, true)`
+  before the real query -- `true` scopes it to that transaction only, so
+  it can never leak across a pooled connection to a different request.
+- `current_user_id() returns uuid` reads that setting back
+  (`nullif(current_setting('app.current_user_id', true), '')::uuid`) --
+  this is the direct replacement for Supabase's `auth.uid()`.
 - `is_org_member(org_id uuid) returns boolean` — `security definer` helper,
-  checks `organization_users` for the calling `auth.uid()`.
+  checks `organization_users` for `current_user_id()`.
 - `current_org_role(org_id uuid) returns text` — returns the caller's role
   key ('owner' | 'office_manager' | 'employee') within that org, or null.
 - `current_employee_id(org_id uuid) returns uuid` — for employee-role
@@ -63,17 +85,46 @@ All policies key off these functions rather than duplicating the join
 logic per table, and are defined in the same migration as each table so
 tenant isolation ships with the schema, never as an afterthought.
 
+**The one manual step this requires**: Railway provisions a single Postgres
+role that owns every table it creates, and Postgres exempts table owners
+from RLS by default. If the deployed app keeps using that same owner
+connection string, every policy above is defined but silently bypassed --
+tenant isolation would then rest entirely on the application-layer checks
+in `lib/session.ts` and every server action (which are real, and are
+themselves a genuine authorization boundary, but RLS is supposed to be
+the second, database-level line of defense). Run `db/create_app_role.sql`
+once (instructions in that file) to create a non-owner `app_user` role,
+and point the deployed app's `DATABASE_URL` at that role rather than the
+Railway-provisioned owner string, which should be kept only for running
+migrations. This is called out again in §9 and belongs on the Phase 10
+hardening checklist.
+
+The bootstrap/signup path (creating a brand-new organization when no
+membership row exists yet to satisfy the usual policies) does not need a
+service-role bypass: `organizations` has a permissive `INSERT ... WITH
+CHECK (true)` policy (creating a new tenant is the intended entry point),
+and `organization_users` has a bootstrap policy that lets a user insert
+their own membership row into an org that currently has zero members --
+i.e. claiming ownership of the org they just created. Every insert after
+that (`organization_settings`, `credential_types`, the audit log entry)
+runs in the same transaction and now passes the normal `is_org_admin()`
+check because that membership row already exists. See
+`lib/organizations.ts`.
+
 ## 3. Database Schema
 
-See `supabase/migrations/0001_init.sql` for the authoritative definition.
+See `db/migrations/0001_init.sql` for the authoritative definition.
 Summary:
 
 | Table | Purpose |
 |---|---|
+| `users` | Account identity: email + scrypt password hash. Not org-scoped, not RLS-protected -- the trust root the rest of the schema's RLS is built on, only ever touched by server-only auth code |
+| `sessions` | Opaque session tokens (hashed) backing the httpOnly cookie |
+| `password_reset_tokens` | One-hour, single-use password reset tokens (hashed) |
 | `organizations` | Tenant root |
 | `organization_settings` | Compliance color thresholds, notification schedule, timezone |
 | `roles` | Owner / Office Manager / Employee — a table, not an enum, so more can be added without a migration |
-| `organization_users` | Links `auth.users` → org → role → optional `employee_id` (employee portal login) |
+| `organization_users` | Links `users` → org → role → optional `employee_id` (employee portal login) |
 | `departments` | Org-scoped department list |
 | `positions` | Org-scoped job positions |
 | `employees` | Employee profile (§4 fields) |
@@ -170,16 +221,23 @@ Nothing is ever deleted or overwritten — audits need the full history.
 
 ## 9. Security Architecture
 
-- Supabase Auth for identity; RLS for every authorization decision at the
-  data layer (§2) — the frontend never being the last line of defense.
-- Private Storage buckets; all document access via short-lived signed
-  URLs generated server-side after an RLS-backed permission check.
-- Service-role key used only in server-only contexts (Route Handlers,
-  Edge Functions), never shipped to the browser or the mobile bundle.
-- Zod validation at every server entry point (Route Handlers, Server
-  Actions) in addition to Postgres constraints.
-- Audit log is insert-only (no `UPDATE`/`DELETE` grants to any
-  non-service role).
+- Self-hosted session auth (§1/§2): scrypt-hashed passwords, opaque
+  session tokens (only their SHA-256 hash is stored), httpOnly/secure/
+  SameSite=Lax cookie, session revocation on password reset. RLS for
+  every authorization decision at the data layer (§2) — the frontend
+  never being the last line of defense.
+- Private bucket storage (Phase 6); all document access via short-lived
+  presigned URLs generated server-side after the same permission check
+  used elsewhere, never a public/predictable path.
+- `DATABASE_URL` used only in server-only contexts (Route Handlers,
+  Server Actions, the migration/seed scripts, the future background
+  job), never shipped to the browser or the mobile bundle. Production
+  should use the least-privileged `app_user` role from
+  `db/create_app_role.sql`, not the Railway-provisioned owner role --
+  see the callout in §2.
+- Zod validation at every server entry point (Server Actions) in
+  addition to Postgres constraints.
+- Audit log is insert-only (no `UPDATE`/`DELETE` grants to any role).
 - IDs are UUIDv4 (non-enumerable) everywhere user-facing.
 
 ## 10. Role / Permission Matrix
@@ -252,21 +310,24 @@ Each phase ends with lint + typecheck + tests green before moving on.
 ## 14. Environment Variables / External Services
 
 ```
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=        # server-only, never exposed to client
-RESEND_API_KEY=                    # transactional email
+DATABASE_URL=                      # Railway Postgres; owner role for migrate/seed,
+                                    # app_user role (db/create_app_role.sql) in production
 NEXT_PUBLIC_APP_URL=
+RESEND_API_KEY=                    # transactional email (password reset today; Phase 7 notifications later)
+EMAIL_FROM=
 # Future, additive:
 TWILIO_ACCOUNT_SID=
 TWILIO_AUTH_TOKEN=
-EXPO_PUBLIC_SUPABASE_URL=
-EXPO_PUBLIC_SUPABASE_ANON_KEY=
+RAILWAY_BUCKET_ENDPOINT=           # Phase 6 document storage
+RAILWAY_BUCKET_NAME=
+RAILWAY_BUCKET_ACCESS_KEY_ID=
+RAILWAY_BUCKET_SECRET_ACCESS_KEY=
 ```
 
-No live Supabase project is provisioned yet. `supabase/migrations` and
-`supabase/seed.sql` are ready to apply to a project once one is connected
-(`supabase link` + `supabase db push`, or via the Supabase MCP tools).
+No live Railway project is provisioned yet. `db/migrations` and
+`db/seed.sql` are ready to apply the moment one is connected: set
+`DATABASE_URL` to the Postgres service's connection string and run
+`pnpm db:migrate` (and, for local dev only, `pnpm db:seed`).
 
 ## 15. Business-Rule Decisions Made By Default (revisit if wrong)
 

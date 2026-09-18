@@ -1,5 +1,4 @@
 import { requireOrgContext } from "@/lib/session";
-import { createClient } from "@/lib/supabase/server";
 import { getEmployeeDetail } from "@/lib/data/employeeDetail";
 import { StatusBadge } from "@/components/StatusBadge";
 import { formatDateLong } from "@compliance/shared";
@@ -15,8 +14,7 @@ export default async function ProfilePage() {
     );
   }
 
-  const supabase = await createClient();
-  const detail = await getEmployeeDetail(supabase, ctx.organizationId, ctx.employeeId);
+  const detail = await getEmployeeDetail(ctx.userId, ctx.organizationId, ctx.employeeId);
 
   if (!detail) {
     return (

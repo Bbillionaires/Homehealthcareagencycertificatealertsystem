@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireOrgContext } from "@/lib/session";
-import { createClient } from "@/lib/supabase/server";
 import { getEmployeeDetail } from "@/lib/data/employeeDetail";
 import { StatusBadge } from "@/components/StatusBadge";
 import { formatDateLong } from "@compliance/shared";
@@ -9,8 +8,7 @@ import { formatDateLong } from "@compliance/shared";
 export default async function EmployeeDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const ctx = await requireOrgContext();
-  const supabase = await createClient();
-  const detail = await getEmployeeDetail(supabase, ctx.organizationId, id);
+  const detail = await getEmployeeDetail(ctx.userId, ctx.organizationId, id);
 
   if (!detail) notFound();
 

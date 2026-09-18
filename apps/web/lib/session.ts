@@ -1,10 +1,11 @@
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
-import type { RoleKey } from "@/lib/database.types";
+import { getSessionUser } from "@/lib/auth/session";
+import { withUserContext } from "@/lib/db/context";
+import type { RoleKey } from "@/lib/db/types";
 
 export interface OrgContext {
   userId: string;
-  email: string | null;
+  email: string;
   organizationId: string;
   organizationName: string;
   role: RoleKey;
@@ -17,30 +18,36 @@ export interface OrgContext {
  * organization yet (shouldn't normally happen post-signup, but keeps the
  * app from rendering a broken dashboard if it does).
  *
- * NOTE: this only decides *which org/role a page renders for* — it is a
- * UX convenience, not the authorization boundary. Every actual data
- * access is still enforced by Postgres RLS.
+ * NOTE: this only decides *which org/role a page renders for* -- it is a
+ * UX convenience, not the sole authorization boundary. Every actual data
+ * access still runs inside `withUserContext`, which is what Postgres RLS
+ * keys off (see docs/ARCHITECTURE.md's note on the app_user role for the
+ * one manual step that makes RLS the enforced second layer rather than
+ * just app-layer checks).
  */
 export async function requireOrgContext(): Promise<OrgContext> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
+  const user = await getSessionUser();
   if (!user) {
     redirect("/login");
   }
 
-  const { data: membership } = await supabase
-    .from("organization_users")
-    .select("organization_id, employee_id, roles(key), organizations(name)")
-    .eq("user_id", user.id)
-    .eq("is_active", true)
-    .limit(1)
-    .maybeSingle<{
+  const membership = await withUserContext(user.id, async (client) => {
+    const result = await client.query<{
       organization_id: string;
       employee_id: string | null;
-      roles: { key: RoleKey } | null;
-      organizations: { name: string } | null;
-    }>();
+      role_key: RoleKey;
+      organization_name: string;
+    }>(
+      `SELECT ou.organization_id, ou.employee_id, r.key AS role_key, o.name AS organization_name
+       FROM organization_users ou
+       JOIN roles r ON r.id = ou.role_id
+       JOIN organizations o ON o.id = ou.organization_id
+       WHERE ou.user_id = $1 AND ou.is_active
+       LIMIT 1`,
+      [user.id]
+    );
+    return result.rows[0] ?? null;
+  });
 
   if (!membership) {
     redirect("/signup");
@@ -48,10 +55,10 @@ export async function requireOrgContext(): Promise<OrgContext> {
 
   return {
     userId: user.id,
-    email: user.email ?? null,
+    email: user.email,
     organizationId: membership.organization_id,
-    organizationName: membership.organizations?.name ?? "",
-    role: membership.roles?.key ?? "employee",
+    organizationName: membership.organization_name,
+    role: membership.role_key,
     employeeId: membership.employee_id,
   };
 }

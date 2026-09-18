@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { requireOrgContext } from "@/lib/session";
-import { createClient } from "@/lib/supabase/server";
 import { getOrgComplianceRoster, summarizeRoster } from "@/lib/data/compliance";
 import { StatusBadge } from "@/components/StatusBadge";
 import { STATUS_PRESENTATION } from "@compliance/shared";
@@ -21,8 +20,7 @@ const CARDS: {
 
 export default async function DashboardPage() {
   const ctx = await requireOrgContext();
-  const supabase = await createClient();
-  const roster = await getOrgComplianceRoster(supabase, ctx.organizationId);
+  const roster = await getOrgComplianceRoster(ctx.userId, ctx.organizationId);
   const counts = summarizeRoster(roster);
 
   const nonCompliant = roster.filter((e) => e.compliance.overallStatus !== "CURRENT");

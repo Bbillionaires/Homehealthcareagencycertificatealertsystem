@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { requireOrgContext } from "@/lib/session";
-import { createClient } from "@/lib/supabase/server";
 import { getOrgComplianceRoster } from "@/lib/data/compliance";
 import { StatusBadge } from "@/components/StatusBadge";
 import type { CredentialStatusKey } from "@compliance/shared";
@@ -12,9 +11,8 @@ export default async function EmployeesPage({
 }) {
   const ctx = await requireOrgContext();
   const params = await searchParams;
-  const supabase = await createClient();
 
-  const roster = await getOrgComplianceRoster(supabase, ctx.organizationId, {
+  const roster = await getOrgComplianceRoster(ctx.userId, ctx.organizationId, {
     includeInactive: params.includeInactive === "1",
   });
 

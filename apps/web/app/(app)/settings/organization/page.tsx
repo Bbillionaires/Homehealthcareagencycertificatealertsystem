@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { requireOrgContext } from "@/lib/session";
-import { createClient } from "@/lib/supabase/server";
+import { withUserContext } from "@/lib/db/context";
 
 export default async function OrganizationSettingsPage() {
   const ctx = await requireOrgContext();
@@ -8,12 +8,18 @@ export default async function OrganizationSettingsPage() {
     redirect("/dashboard");
   }
 
-  const supabase = await createClient();
-  const { data: settings } = await supabase
-    .from("organization_settings")
-    .select("compliance_yellow_threshold_days, compliance_orange_threshold_days, notify_schedule_days, timezone")
-    .eq("organization_id", ctx.organizationId)
-    .maybeSingle();
+  const settings = await withUserContext(ctx.userId, async (client) => {
+    const result = await client.query<{
+      compliance_yellow_threshold_days: number;
+      compliance_orange_threshold_days: number;
+      notify_schedule_days: number[];
+      timezone: string;
+    }>(
+      "SELECT compliance_yellow_threshold_days, compliance_orange_threshold_days, notify_schedule_days, timezone FROM organization_settings WHERE organization_id = $1",
+      [ctx.organizationId]
+    );
+    return result.rows[0] ?? null;
+  });
 
   return (
     <div className="space-y-6">

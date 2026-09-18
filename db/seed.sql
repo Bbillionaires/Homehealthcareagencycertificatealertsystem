@@ -1,10 +1,13 @@
--- Local development seed data ONLY. Never run against a production project.
+-- Local development seed data ONLY. Never run against a production database.
 -- Creates one demo organization with a demo Owner login and a set of
 -- fictional employees deliberately covering every compliance status
 -- (green/yellow/orange/red/gray), a terminated employee (excluded from
 -- active alerts), and a new hire (missing checklist).
 --
--- Demo login (local Supabase auth): demo.owner@example.com / DemoPass123!
+-- Demo login: demo.owner@example.com / DemoPass123!
+-- (the password hash below is that literal password, hashed with the
+-- same scrypt scheme as apps/web/lib/auth/password.ts -- see that file
+-- if you need to regenerate it.)
 
 create extension if not exists "pgcrypto";
 
@@ -52,31 +55,14 @@ begin
 
   select id into v_owner_role_id from roles where key = 'owner';
 
-  if not exists (select 1 from auth.users where id = v_owner_user_id) then
-    insert into auth.users (
-      instance_id, id, aud, role, email, encrypted_password,
-      email_confirmed_at, recovery_sent_at, last_sign_in_at,
-      raw_app_meta_data, raw_user_meta_data,
-      created_at, updated_at,
-      confirmation_token, email_change, email_change_token_new, recovery_token
-    ) values (
-      '00000000-0000-0000-0000-000000000000',
-      v_owner_user_id, 'authenticated', 'authenticated',
-      'demo.owner@example.com', crypt('DemoPass123!', gen_salt('bf')),
-      now(), now(), now(),
-      '{"provider":"email","providers":["email"]}', '{"full_name":"Demo Owner"}',
-      now(), now(), '', '', '', ''
-    );
-
-    insert into auth.identities (
-      id, user_id, identity_data, provider, provider_id,
-      last_sign_in_at, created_at, updated_at
-    ) values (
-      gen_random_uuid(), v_owner_user_id,
-      jsonb_build_object('sub', v_owner_user_id::text, 'email', 'demo.owner@example.com'),
-      'email', v_owner_user_id::text, now(), now(), now()
-    );
-  end if;
+  insert into users (id, email, password_hash, full_name)
+  values (
+    v_owner_user_id,
+    'demo.owner@example.com',
+    'f29041eb37457ce21b15ab189fdc01c7:dc0288f5cbc58626c6f4ebd0075f011ffa05bcf2e0a34afef5b8898e68aef9fb95832f89689b69d95ba2a40a9869efcdbd793c727df2acdf7d00ab3ba8a67df8',
+    'Demo Owner'
+  )
+  on conflict (id) do nothing;
 
   insert into organization_users (organization_id, user_id, role_id)
   values (v_org_id, v_owner_user_id, v_owner_role_id)

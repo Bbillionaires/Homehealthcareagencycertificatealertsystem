@@ -1,8 +1,8 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { addCalendarInterval, credentialRenewalSchema } from "@compliance/shared";
-import { createClient } from "@/lib/supabase/server";
+import { addCalendarInterval, credentialRenewalSchema, type IntervalUnit } from "@compliance/shared";
+import { withUserContext } from "@/lib/db/context";
 import { requireOrgContext } from "@/lib/session";
 
 export interface ActionResult {
@@ -30,38 +30,41 @@ export async function renewCredentialAction(_prev: ActionResult, formData: FormD
   }
 
   const input = parsed.data;
-  const supabase = await createClient();
 
-  const { data: credentialType, error: ctError } = await supabase
-    .from("credential_types")
-    .select("renewal_interval_value, renewal_interval_unit")
-    .eq("id", input.credentialTypeId)
-    .eq("organization_id", ctx.organizationId)
-    .single();
+  try {
+    await withUserContext(ctx.userId, async (client) => {
+      const credentialTypeResult = await client.query<{
+        renewal_interval_value: number | null;
+        renewal_interval_unit: IntervalUnit | null;
+      }>(
+        "SELECT renewal_interval_value, renewal_interval_unit FROM credential_types WHERE id = $1 AND organization_id = $2",
+        [input.credentialTypeId, ctx.organizationId]
+      );
+      const credentialType = credentialTypeResult.rows[0];
+      if (!credentialType) throw new Error("Credential type not found.");
 
-  if (ctError || !credentialType) {
-    return { error: "Credential type not found." };
-  }
+      const expirationDate =
+        credentialType.renewal_interval_value && credentialType.renewal_interval_unit
+          ? addCalendarInterval(input.completionDate, credentialType.renewal_interval_value, credentialType.renewal_interval_unit)
+          : null;
 
-  const expirationDate =
-    credentialType.renewal_interval_value && credentialType.renewal_interval_unit
-      ? addCalendarInterval(input.completionDate, credentialType.renewal_interval_value, credentialType.renewal_interval_unit)
-      : null;
-
-  const { error } = await supabase.rpc("renew_employee_credential", {
-    p_employee_id: input.employeeId,
-    p_credential_type_id: input.credentialTypeId,
-    p_completion_date: input.completionDate,
-    p_issue_date: input.issueDate ?? null,
-    p_expiration_date: expirationDate,
-    p_certificate_number: input.certificateNumber ?? null,
-    p_issuing_organization: input.issuingOrganization ?? null,
-    p_notes: input.notes ?? null,
-    p_actor_user_id: ctx.userId,
-  });
-
-  if (error) {
-    return { error: error.message };
+      await client.query(
+        `SELECT renew_employee_credential($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          input.employeeId,
+          input.credentialTypeId,
+          input.completionDate,
+          input.issueDate ?? null,
+          expirationDate,
+          input.certificateNumber || null,
+          input.issuingOrganization || null,
+          input.notes || null,
+          ctx.userId,
+        ]
+      );
+    });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Failed to save renewal." };
   }
 
   redirect(`/employees/${input.employeeId}`);

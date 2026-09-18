@@ -1,5 +1,7 @@
 -- Employee Credential, Training & Compliance Management Platform
 -- Phase 1: core schema, multi-tenant isolation, RLS.
+-- Target: plain Postgres (e.g. a Railway Postgres service) -- no
+-- PostgREST/Supabase-specific schemas or functions are used.
 --
 -- Conventions:
 --   * every business table has organization_id, enforced via RLS
@@ -7,6 +9,16 @@
 --   * created_at/updated_at timestamptz, updated via trigger
 --   * completion/issue/expiration dates are `date` (calendar dates, not
 --     instants) so renewal math never drifts across timezones
+--
+-- Authentication/session model:
+--   There is no hosted auth product here (unlike Supabase Auth), so this
+--   schema owns its own `users`/`sessions`/`password_reset_tokens`
+--   tables (see docs/ARCHITECTURE.md). RLS policies can't rely on a JWT
+--   claim like Supabase's `auth.uid()`; instead the application sets a
+--   Postgres session variable (`app.current_user_id`) at the start of
+--   every request's transaction via `set_config(...)`, and `current_user_id()`
+--   below reads it back. This keeps tenant isolation enforced in the
+--   database, not just in application code, same as the original design.
 
 create extension if not exists "pgcrypto";
 
@@ -22,6 +34,49 @@ begin
   return new;
 end;
 $$;
+
+-- ---------------------------------------------------------------------
+-- users / sessions / password_reset_tokens
+-- Not organization-scoped and not RLS-protected: these are the trust
+-- root the rest of the schema's RLS is built on (comparable to
+-- Supabase's separate `auth` schema), and are only ever touched by
+-- server-only application code (login/signup/session validation), never
+-- exposed through a general query layer to end users.
+-- ---------------------------------------------------------------------
+create table users (
+  id uuid primary key default gen_random_uuid(),
+  email text not null unique,
+  password_hash text not null,
+  full_name text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create trigger users_set_updated_at
+  before update on users
+  for each row execute function set_updated_at();
+
+create table sessions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references users(id) on delete cascade,
+  token_hash text not null unique,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null
+);
+
+create index sessions_user_idx on sessions(user_id);
+create index sessions_expires_idx on sessions(expires_at);
+
+create table password_reset_tokens (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references users(id) on delete cascade,
+  token_hash text not null unique,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  used_at timestamptz
+);
+
+create index password_reset_tokens_user_idx on password_reset_tokens(user_id);
 
 -- ---------------------------------------------------------------------
 -- organizations
@@ -78,7 +133,7 @@ insert into roles (key, name, description, is_system) values
 create table organization_users (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references organizations(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
+  user_id uuid not null references users(id) on delete cascade,
   role_id uuid not null references roles(id),
   employee_id uuid, -- fk added after employees table is created
   is_active boolean not null default true,
@@ -98,6 +153,20 @@ create trigger organization_users_set_updated_at
 -- RLS helper functions (security definer: bypass RLS internally so they
 -- can be used inside policies without recursion)
 -- ---------------------------------------------------------------------
+
+-- The application sets this once per request/transaction via:
+--   select set_config('app.current_user_id', $1, true);
+-- ($1 = the authenticated user's id, resolved from the session cookie
+-- before touching any org-scoped table.) `true` scopes it to the current
+-- transaction, so it can never leak across pooled connections.
+create or replace function current_user_id()
+returns uuid
+language sql
+stable
+as $$
+  select nullif(current_setting('app.current_user_id', true), '')::uuid;
+$$;
+
 create or replace function is_org_member(target_org_id uuid)
 returns boolean
 language sql
@@ -108,7 +177,7 @@ as $$
   select exists (
     select 1 from organization_users ou
     where ou.organization_id = target_org_id
-      and ou.user_id = auth.uid()
+      and ou.user_id = current_user_id()
       and ou.is_active
   );
 $$;
@@ -124,7 +193,7 @@ as $$
   from organization_users ou
   join roles r on r.id = ou.role_id
   where ou.organization_id = target_org_id
-    and ou.user_id = auth.uid()
+    and ou.user_id = current_user_id()
     and ou.is_active
   limit 1;
 $$;
@@ -159,7 +228,7 @@ as $$
   select ou.employee_id
   from organization_users ou
   where ou.organization_id = target_org_id
-    and ou.user_id = auth.uid()
+    and ou.user_id = current_user_id()
     and ou.is_active
   limit 1;
 $$;
@@ -172,19 +241,42 @@ create policy organizations_select on organizations
   for select using (is_org_member(id));
 create policy organizations_update on organizations
   for update using (is_org_owner(id));
--- INSERT for organizations happens via the signup Route Handler using the
--- service role key (a brand-new user has no membership yet to check).
+-- Anyone authenticated may create a new organization -- that's the
+-- signup entry point for a brand-new tenant, and there's no existing
+-- membership row to check yet. What matters is that they can't read or
+-- write any OTHER organization's data, which the select/update policies
+-- above (and every other table's policies) still enforce.
+create policy organizations_insert on organizations
+  for insert with check (true);
 
 create policy organization_settings_select on organization_settings
   for select using (is_org_member(organization_id));
 create policy organization_settings_update on organization_settings
   for update using (is_org_owner(organization_id));
+-- Insertable once the caller already has an owner/admin membership row
+-- in this org -- true immediately after the bootstrap-insert below runs
+-- in the same transaction, so signup's "org -> membership -> settings"
+-- order matters (see lib/organizations.ts).
+create policy organization_settings_insert on organization_settings
+  for insert with check (is_org_admin(organization_id));
 
 create policy organization_users_select on organization_users
   for select using (is_org_member(organization_id));
 create policy organization_users_admin_write on organization_users
   for all using (is_org_owner(organization_id))
   with check (is_org_owner(organization_id));
+-- Bootstrap case: a user may insert THEIR OWN membership row into an
+-- organization that currently has no members at all -- i.e. claiming
+-- ownership of a brand-new org they just created. Once that first row
+-- exists, only an existing owner (via the policy above) can add more.
+create policy organization_users_bootstrap_insert on organization_users
+  for insert with check (
+    user_id = current_user_id()
+    and not exists (
+      select 1 from organization_users existing
+      where existing.organization_id = organization_users.organization_id
+    )
+  );
 
 -- ---------------------------------------------------------------------
 -- departments / positions
@@ -249,8 +341,8 @@ create table employees (
   email text,
   photo_url text,
   notes text,
-  created_by uuid references auth.users(id),
-  updated_by uuid references auth.users(id),
+  created_by uuid references users(id),
+  updated_by uuid references users(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (organization_id, employee_number)
@@ -361,13 +453,13 @@ create table employee_credentials (
   certificate_number text,
   issuing_organization text,
   notes text,
-  verified_by uuid references auth.users(id),
+  verified_by uuid references users(id),
   verified_at timestamptz,
   expiration_override boolean not null default false,
   expiration_override_reason text,
   superseded_by uuid references employee_credentials(id),
-  created_by uuid references auth.users(id),
-  updated_by uuid references auth.users(id),
+  created_by uuid references users(id),
+  updated_by uuid references users(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -395,6 +487,10 @@ create policy employee_credentials_write_admin on employee_credentials
 
 -- ---------------------------------------------------------------------
 -- credential_documents (version history)
+-- Document bytes live in a Railway bucket (S3-compatible object
+-- storage), not in Postgres; this table only tracks metadata + the
+-- object key, and access to the bytes goes through a server-generated
+-- presigned URL after the same is_org_admin/self check used below.
 -- ---------------------------------------------------------------------
 create table credential_documents (
   id uuid primary key default gen_random_uuid(),
@@ -405,7 +501,7 @@ create table credential_documents (
   mime_type text not null,
   size_bytes int not null,
   is_current boolean not null default true,
-  uploaded_by uuid references auth.users(id),
+  uploaded_by uuid references users(id),
   uploaded_at timestamptz not null default now()
 );
 
@@ -470,7 +566,7 @@ create policy notification_rules_write on notification_rules
 create table notifications (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references organizations(id) on delete cascade,
-  recipient_user_id uuid not null references auth.users(id) on delete cascade,
+  recipient_user_id uuid not null references users(id) on delete cascade,
   employee_id uuid references employees(id) on delete cascade,
   employee_credential_id uuid references employee_credentials(id) on delete cascade,
   type text not null,
@@ -494,10 +590,11 @@ create unique index notifications_dedupe_idx
 alter table notifications enable row level security;
 
 create policy notifications_select_own on notifications
-  for select using (recipient_user_id = auth.uid());
+  for select using (recipient_user_id = current_user_id());
 create policy notifications_update_own on notifications
-  for update using (recipient_user_id = auth.uid());
--- inserts happen via the service role from the notification job / server actions
+  for update using (recipient_user_id = current_user_id());
+-- inserts happen via the trusted server-only notification job (BYPASSRLS
+-- role), same trust boundary as the organization bootstrap above.
 
 -- ---------------------------------------------------------------------
 -- audit_logs (append-only)
@@ -505,7 +602,7 @@ create policy notifications_update_own on notifications
 create table audit_logs (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references organizations(id) on delete cascade,
-  actor_user_id uuid references auth.users(id),
+  actor_user_id uuid references users(id),
   action text not null,
   entity_type text not null,
   entity_id uuid,
@@ -525,5 +622,4 @@ create policy audit_logs_select on audit_logs
   for select using (is_org_owner(organization_id));
 create policy audit_logs_insert on audit_logs
   for insert with check (is_org_member(organization_id));
--- no update/update policy and no delete policy: append-only for every role,
--- service-role key bypasses RLS entirely for the background job's own writes.
+-- no update policy and no delete policy: append-only for every role.
