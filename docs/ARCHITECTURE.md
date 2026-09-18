@@ -407,84 +407,6 @@ without asking first. Right now the database has schema but no rows, so
 the app's own `/signup` flow is the way to create the first organization
 and admin user.
 
-## 16. Multi-Industry Architecture (Phase 1)
-
-QualifyStaff is being restructured to support multiple industries, not
-just healthcare: **user → organization → one or more industry
-workspaces → locations → positions → employees → requirements →
-qualification status**. This is a large change; it's being built in
-phases so the app never breaks mid-migration. Phase 1
-(`db/migrations/0003_multi_industry.sql`, applied to production) is
-purely additive -- every page, RLS policy, and query from before this
-phase keeps working exactly as before. It adds:
-
-- **`industry_definitions`**: the fixed catalog (Healthcare,
-  Construction, Transportation, Childcare, Security, Education,
-  Government Contracting, Staffing, Custom), mirrored as a static list
-  in `packages/shared/src/industries.ts` for the signup form. Reference
-  data, no RLS (no tenant secrets in it).
-- **`industry_workspaces`**: organization → one or more workspaces, each
-  tied to an `industry_definitions` row, with its own `slug` (unique per
-  org). `/signup` now collects an industry choice and `bootstrapOrganization`
-  (`apps/web/lib/organizations.ts`) creates the org's first workspace and
-  seeds its 9 default credential types into it, alongside everything it
-  already did.
-- **`workspace_memberships`**: workspace-scoped roles
-  (`workspace_admin`/`workspace_manager`/`workspace_employee`, added to
-  the existing `roles` table), separate from organization-level
-  owner/office_manager/employee. An organization Owner gets implicit
-  access to every workspace in their org (see `is_workspace_member()`/
-  `is_workspace_admin()` in the migration, mirroring the existing
-  `is_org_member()`/`is_org_admin()` pattern) without needing an explicit
-  row.
-- **`locations`/`workspace_locations`**: organization-level physical
-  locations, optionally shared across workspaces.
-- **Canonical requirement/template system**: `requirement_definitions`
-  (industry-agnostic canonical catalog, e.g. "CPR/BLS Certification") →
-  `template_definitions` → `template_versions` (draft/published/retired,
-  with a `source` citation field) → `template_requirements`/
-  `template_positions`. All reference data, no RLS. Adopting a template
-  is meant to **copy** its rows into an organization's own
-  `workspace_requirements`, not reference them live, so a later template
-  update never silently changes what an existing workspace enforces.
-  **No template content has been populated yet** -- populating a real,
-  sourced Healthcare/Florida/APD template needs verified regulatory
-  citations this session doesn't have; do not invent them.
-- **`workspace_requirements`**: the workspace-scoped analogue of
-  `credential_types` (optionally linked to a canonical
-  `requirement_definitions` row or a `template_requirements` row it was
-  adopted from). Not yet wired to any page -- Phase 2 re-points
-  `position_requirements`/`employee_credentials` at this table and
-  retires `credential_types`.
-- **`employee_workspace_assignments`/`employee_position_assignments`**:
-  let one `employees` row (still one identity per organization, unchanged)
-  belong to multiple workspaces and hold multiple positions across them,
-  instead of today's single `employees.position_id`. Not yet populated or
-  read by any page.
-- **`requirement_evidence_links`**: lets one piece of evidence
-  (`employee_credentials` row) satisfy multiple `workspace_requirements`
-  -- but only via an explicit link, never by matching display names. The
-  table exists; the auto-linking logic is Phase 4.
-- **`template_update_decisions`**: audit trail for the "Template Update
-  Available → Accept/Apply or Defer" flow. Table exists; the
-  update-detection/apply flow is Phase 6.
-- Nullable `workspace_id` columns added to `positions`, `credential_types`,
-  `position_requirements`, `employee_credentials`, and
-  `notification_rules`, backfilled for every organization that existed
-  before this migration into a default "Healthcare" workspace. Existing
-  RLS on these tables is untouched (still `is_org_admin(organization_id)`
-  etc.) -- Phase 2 cuts them over to `is_workspace_admin(workspace_id)`
-  once the UI/routing that depends on it exists.
-
-**Still to build** (see the phased plan discussed with the user):
-Phase 2 dashboard configuration engine + `/app/[workspaceSlug]/...`
-routing + `GRAY` qualification status; Phase 3 "All Workspaces"
-consolidated view + Settings → Industry Workspaces → Add Workspace;
-Phase 4 requirement equivalency/evidence-sharing; Phase 5 additional
-industry templates (explicitly marked `DRAFT`/`UNVERIFIED`) + the
-Custom/Other configurable builder; Phase 6 platform-admin template
-management; Phase 7 billing schema scaffolding.
-
 ## 15. Business-Rule Decisions Made By Default (revisit if wrong)
 
 These were resolved as configuration rather than blocking questions, per
@@ -498,3 +420,148 @@ configurable:
   specified.
 - Compliance color thresholds default to the suggested 90/60/59/0-day
   boundaries, stored per-org and overridable per credential type.
+
+## 16. Multi-Industry Architecture
+
+QualifyStaff is being restructured to support multiple industries, not
+just healthcare: **user → organization → one or more industry
+workspaces → locations → positions → employees → requirements →
+qualification status**. This is a large change, built in phases so the
+app never breaks mid-migration. Status as of this session:
+
+**Data model (`db/migrations/0003_multi_industry.sql` through
+`0005_platform_admin.sql`, all applied to production, all additive --
+no existing page, RLS policy, or query from before this work changed
+behavior):**
+
+- `industry_definitions`: the fixed catalog (Healthcare, Construction,
+  Transportation, Childcare, Security, Education, Government
+  Contracting, Staffing, Custom), mirrored as a static list in
+  `packages/shared/src/industries.ts`. Reference data, no RLS.
+- `industry_workspaces` + `workspace_memberships`: organization → one or
+  more workspaces, each with its own `slug` (unique per org) and
+  workspace-scoped roles (`workspace_admin`/`workspace_manager`/
+  `workspace_employee`, added to the existing `roles` table). An
+  organization Owner gets implicit access to every workspace in their
+  org (`is_workspace_member()`/`is_workspace_admin()`, mirroring
+  `is_org_member()`/`is_org_admin()`) without needing an explicit row.
+- `locations`/`workspace_locations`: organization-level physical
+  locations, optionally shared across workspaces. Not yet surfaced in
+  any page.
+- Canonical requirement/template system: `requirement_definitions`
+  (industry-agnostic canonical catalog) → `template_definitions` →
+  `template_versions` (draft/published/retired, with a `source` citation
+  field) → `template_requirements`/`template_positions`. Every
+  non-Healthcare, non-Custom industry has one `draft-starter`
+  `template_definitions`/`template_versions` row, explicitly marked
+  **DRAFT/UNVERIFIED** with **zero** requirements attached -- this
+  session has no verified regulatory source material for Construction,
+  Transportation, Childcare, Security, Education, Government
+  Contracting, or Staffing, and the architecture directive is explicit:
+  never invent requirements. Only Healthcare has real requirement
+  content today (`DEFAULT_CREDENTIAL_TYPES`), and it predates this
+  template system, seeded directly rather than through a
+  `template_versions` row.
+- `workspace_requirements`: the workspace-scoped analogue of
+  `credential_types`. **Not yet wired to any page** -- `credential_types`
+  is still what every page reads/writes; retiring it in favor of
+  `workspace_requirements` (with `position_requirements`/
+  `employee_credentials` re-pointed at it) is the largest remaining
+  piece of this work.
+- `employee_workspace_assignments`/`employee_position_assignments`: let
+  one `employees` row (still one identity per organization) belong to
+  multiple workspaces and hold multiple positions across them, instead
+  of today's single `employees.position_id`. Tables exist; **not yet
+  populated or read by any page** -- an employee's position today is
+  still the single legacy FK, org-wide rather than per-workspace.
+- `requirement_evidence_links`: lets one piece of evidence satisfy
+  multiple `workspace_requirements`, but only via an explicit link,
+  never by matching display names. Table exists; no auto-linking logic
+  yet.
+- `template_update_decisions`: audit trail for a future "Template
+  Update Available → Accept/Apply or Defer" flow. Table exists; no
+  update-detection/apply flow yet.
+- `billing_plans`/`billing_plan_features`/`organization_subscriptions`:
+  billing scaffolding with no hard-coded pricing. A single "Founding"
+  plan is seeded and every organization has a subscription row to it;
+  `billing_plan_features` is an open key/value table for later billable
+  dimensions (employees, workspaces, locations, storage, advanced
+  reports, SMS, API/integrations) rather than a column per feature.
+  Nothing here is wired to a payment processor.
+- `users.is_platform_admin`: a flag for the platform-admin area, default
+  `false` for everyone -- granted manually against the database, not
+  through any signup or invite flow.
+- Nullable `workspace_id` columns added to `positions`, `credential_types`,
+  `position_requirements`, `employee_credentials`, and
+  `notification_rules`, backfilled for every organization that existed
+  before this migration into a default "Healthcare" workspace, and
+  populated for every new workspace going forward
+  (`lib/organizations.ts`'s `bootstrapOrganization`, `lib/workspaces.ts`'s
+  `createWorkspace`). Existing RLS on these tables is **untouched**
+  (still `is_org_admin(organization_id)` etc.) -- cutting them over to
+  `is_workspace_admin(workspace_id)` is part of the same remaining work
+  as retiring `credential_types`.
+
+**Application layer built on top of that:**
+
+- `/signup` collects an industry choice and creates the org's first
+  workspace. Only Healthcare seeds `DEFAULT_CREDENTIAL_TYPES` (CPR,
+  HIPAA, etc.) -- every other industry starts with an empty,
+  admin-configurable requirement catalog under Settings → Credential
+  Types, so healthcare-specific items are never misrepresented as
+  another industry's requirements.
+- A workspace switcher (`components/WorkspaceSwitcher.tsx`) in the app
+  sidebar: every workspace the user can access, "All Workspaces", and
+  "+ Add Workspace" (owners only). Settings → Industry Workspaces
+  (`/settings/workspaces`) lists an org's workspaces and lets an owner
+  add another one (`lib/workspaces.ts`'s `createWorkspace`), same
+  bootstrap logic as signup minus the organization/owner-membership
+  steps.
+- A real per-workspace dashboard at `/app/[workspaceSlug]/dashboard`,
+  scoped to that workspace's positions/requirements via
+  `getOrgComplianceRoster`'s optional `workspaceId` filter --
+  authorized through `requireWorkspaceContext()` (`lib/workspaces.ts`),
+  which mirrors `requireOrgContext()` but also resolves and checks the
+  specific workspace.
+- The existing org-wide `/dashboard`, `/employees`, `/settings/*` pages
+  are **unchanged** and now serve as the "All Workspaces" view (they
+  already query across the whole org). `/dashboard` additionally shows
+  a "Compliance by Workspace" breakdown table once an organization has
+  more than one workspace (`components/WorkspaceComplianceBreakdown.tsx`),
+  without exposing any workspace's industry-specific requirement detail
+  inline.
+- `/admin/templates`: read-only, gated on `users.is_platform_admin`,
+  listing every industry and its template versions across all
+  organizations with requirement/position counts and draft/published/
+  retired status. No create/edit/publish UI yet -- template content is
+  still added directly against the database.
+- The shared qualification engine (`packages/shared/src/compliance.ts`)
+  already matched the target design before this work started: five
+  statuses (CURRENT/EXPIRING_SOON/URGENT/EXPIRED/MISSING = GREEN/
+  YELLOW/ORANGE/RED/GRAY), and overall status is the single most severe
+  outstanding *mandatory* requirement, never an average/percentage. No
+  changes were needed here.
+
+**What's genuinely not built yet** -- the largest remaining pieces, in
+rough priority order:
+
+1. Retiring `credential_types` in favor of `workspace_requirements`
+   (re-pointing `position_requirements`/`employee_credentials`, cutting
+   RLS over to `is_workspace_admin(workspace_id)`), and populating
+   `employee_workspace_assignments`/`employee_position_assignments` so
+   an employee's positions are genuinely per-workspace instead of one
+   org-wide FK.
+2. Per-workspace variants of `/employees` and the credential-type/
+   position settings pages (today only the dashboard has one).
+3. Requirement equivalency/evidence-sharing UI (the data model exists;
+   nothing surfaces or lets an admin create the links yet).
+4. Real, sourced Healthcare/Florida/APD template content in the
+   template system (today's Healthcare defaults predate it and were
+   seeded directly) -- and, eventually, verified requirement content
+   for the other industries, replacing their empty draft scaffolds.
+   Requires real regulatory research this session doesn't have; never
+   invent this content.
+5. Template create/edit/publish/retire UI in `/admin/templates`, and
+   the "Template Update Available → Accept/Apply/Defer" flow
+   (`template_update_decisions` exists but nothing writes to it).
+6. Payment processor integration for the billing scaffolding.
