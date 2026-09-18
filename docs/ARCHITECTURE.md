@@ -263,14 +263,16 @@ Nothing is ever deleted or overwritten — audits need the full history.
 /(app)/employees/new
 /(app)/employees/[id]                    tabs: Overview, Training & Credentials,
                                           Background Checks, Documents, History, Notes
+/(app)/employees/[id]/edit
 /(app)/employees/[id]/credentials/[credentialTypeId]/renew
+/(app)/employees/[id]/credentials/[credentialTypeId]/override   Owner only, reason required (§7)
 /(app)/calendar                          day/week/month, color-coded
 /(app)/reports                           list of report types → filters → export
 /(app)/notifications
 /(app)/audit-log                         Owner only
-/(app)/settings/organization
-/(app)/settings/credential-types
-/(app)/settings/positions
+/(app)/settings/organization             thresholds + notification schedule (editable)
+/(app)/settings/credential-types         catalog CRUD, renewal interval, warning overrides (Owner only)
+/(app)/settings/positions                position CRUD + per-position requirement matrix (Owner only)
 /(app)/settings/users
 /(app)/settings/notifications
 /(app)/import/employees

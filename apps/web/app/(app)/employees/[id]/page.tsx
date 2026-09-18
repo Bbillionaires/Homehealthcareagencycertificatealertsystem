@@ -101,6 +101,14 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
                         >
                           {credential?.activeRecordId ? "Renew" : "Add"}
                         </Link>
+                        {ctx.role === "owner" && credential?.activeRecordId && (
+                          <Link
+                            href={`/employees/${employee.id}/credentials/${result.credentialTypeId}/override`}
+                            className="ml-3 text-sm font-medium text-amber-700 hover:underline"
+                          >
+                            Override
+                          </Link>
+                        )}
                       </td>
                     )}
                   </tr>

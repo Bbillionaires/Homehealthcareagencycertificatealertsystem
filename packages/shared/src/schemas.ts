@@ -53,6 +53,9 @@ export const credentialTypeInputSchema = z.object({
   renewalIntervalValue: z.number().int().positive().nullable(),
   renewalIntervalUnit: z.enum(["days", "months", "years"]).nullable(),
   requiresDocument: z.boolean().default(true),
+  isRequiredDefault: z.boolean().default(true),
+  warningYellowThresholdDays: z.number().int().positive().nullable(),
+  warningOrangeThresholdDays: z.number().int().positive().nullable(),
   isActive: z.boolean().default(true),
 });
 

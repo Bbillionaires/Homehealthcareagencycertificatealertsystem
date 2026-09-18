@@ -1,6 +1,8 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireOrgContext } from "@/lib/session";
 import { withUserContext } from "@/lib/db/context";
+import { OrgSettingsForm } from "./OrgSettingsForm";
 
 export default async function OrganizationSettingsPage() {
   const ctx = await requireOrgContext();
@@ -28,8 +30,23 @@ export default async function OrganizationSettingsPage() {
         <p className="text-sm text-slate-500">{ctx.organizationName}</p>
       </div>
 
+      <div className="flex gap-3">
+        <Link href="/settings/credential-types" className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          Manage Credential Types
+        </Link>
+        <Link href="/settings/positions" className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          Manage Positions
+        </Link>
+      </div>
+
+      <OrgSettingsForm
+        yellowThresholdDays={settings?.compliance_yellow_threshold_days ?? 90}
+        orangeThresholdDays={settings?.compliance_orange_threshold_days ?? 60}
+        notifyScheduleDays={settings?.notify_schedule_days ?? [90, 60, 30, 14, 7, 0]}
+      />
+
       <section className="rounded-xl border border-slate-200 bg-white p-5">
-        <h2 className="text-base font-semibold text-slate-900">Compliance Thresholds</h2>
+        <h2 className="text-base font-semibold text-slate-900">How thresholds map to colors</h2>
         <dl className="mt-3 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
           <div>
             <dt className="text-xs uppercase tracking-wide text-slate-400">Green (Current)</dt>
@@ -50,16 +67,6 @@ export default async function OrganizationSettingsPage() {
             <dd className="text-slate-700">0 or fewer days</dd>
           </div>
         </dl>
-        <p className="mt-4 text-xs text-slate-400">
-          An editable form for thresholds, notification schedule, credential types, and positions is planned for Phase 3/7 (credential & notification configuration). These values are stored per-organization in <code>organization_settings</code> today and already drive every compliance calculation.
-        </p>
-      </section>
-
-      <section className="rounded-xl border border-slate-200 bg-white p-5">
-        <h2 className="text-base font-semibold text-slate-900">Notification Schedule</h2>
-        <p className="mt-2 text-sm text-slate-600">
-          Alerts at {(settings?.notify_schedule_days ?? [90, 60, 30, 14, 7, 0]).join(", ")} days before expiration, then daily while overdue.
-        </p>
       </section>
     </div>
   );

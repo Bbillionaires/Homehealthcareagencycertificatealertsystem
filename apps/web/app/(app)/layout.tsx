@@ -13,6 +13,8 @@ const ADMIN_NAV = [
 const OWNER_ONLY_NAV = [
   { href: "/audit-log", label: "Audit Log" },
   { href: "/settings/organization", label: "Settings" },
+  { href: "/settings/credential-types", label: "Credential Types" },
+  { href: "/settings/positions", label: "Positions" },
 ];
 
 const EMPLOYEE_NAV = [
