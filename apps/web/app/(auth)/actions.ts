@@ -6,7 +6,7 @@ import { withDb } from "@/lib/db/context";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { createSession, destroySession } from "@/lib/auth/session";
 import { createPasswordResetToken, consumePasswordResetToken } from "@/lib/auth/passwordReset";
-import { sendPasswordResetEmail } from "@/lib/auth/email";
+import { sendEmail } from "@/lib/email";
 import { bootstrapOrganization } from "@/lib/organizations";
 
 export interface ActionResult {
@@ -97,7 +97,11 @@ export async function requestPasswordResetAction(_prev: ActionResult, formData: 
     const token = await createPasswordResetToken(user.id);
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
     const resetUrl = `${appUrl}/reset-password/confirm?token=${token}`;
-    await sendPasswordResetEmail(email, resetUrl);
+    await sendEmail({
+      to: email,
+      subject: "Reset your password",
+      text: `We received a request to reset your password. Reset it here (link expires in 1 hour): ${resetUrl}\n\nIf you didn't request this, you can ignore this email.`,
+    });
   }
 
   return { success: true };

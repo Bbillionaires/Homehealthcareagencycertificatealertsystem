@@ -109,6 +109,12 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
                             Override
                           </Link>
                         )}
+                        <Link
+                          href={`/employees/${employee.id}/credentials/${result.credentialTypeId}/documents`}
+                          className="ml-3 text-sm font-medium text-slate-600 hover:underline"
+                        >
+                          Documents
+                        </Link>
                       </td>
                     )}
                   </tr>

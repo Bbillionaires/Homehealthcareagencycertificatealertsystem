@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireOrgContext } from "@/lib/session";
 import { getEmployeeDetail } from "@/lib/data/employeeDetail";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -60,6 +61,7 @@ export default async function ProfilePage() {
               <th className="px-5 py-3">Completed</th>
               <th className="px-5 py-3">Expires</th>
               <th className="px-5 py-3">Status</th>
+              <th className="px-5 py-3" />
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -72,6 +74,16 @@ export default async function ProfilePage() {
                   <td className="px-5 py-3 text-slate-500">{result.expirationDate ? formatDateLong(result.expirationDate) : "—"}</td>
                   <td className="px-5 py-3">
                     <StatusBadge color={result.color} icon={result.icon} label={result.label} />
+                  </td>
+                  <td className="px-5 py-3 text-right">
+                    {credential?.activeRecordId && (
+                      <Link
+                        href={`/employees/${ctx.employeeId}/credentials/${result.credentialTypeId}/documents`}
+                        className="text-sm font-medium text-brand-600 hover:underline"
+                      >
+                        Documents
+                      </Link>
+                    )}
                   </td>
                 </tr>
               );

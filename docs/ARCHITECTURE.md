@@ -205,19 +205,39 @@ Nothing is ever deleted or overwritten — audits need the full history.
 
 ## 8. Notification Architecture
 
-- **Schedule**: `notification_rules` (global default + optional per
-  credential-type override) drives a days-before list, default
-  `{90,60,30,14,7,0}`, plus continued (non-duplicated) alerts while a
-  credential stays expired.
-- **Dedup**: each generated notification gets a `dedupe_key` (e.g.
-  `credential:<id>:milestone:<days>`), unique per org — reruns of the
-  nightly job are idempotent.
+- **Schedule**: `organization_settings.notify_schedule_days`, default
+  `{90,60,30,14,7,0}`, plus continued (non-duplicated) alerts every day a
+  credential stays expired. `notification_rules` exists in the schema for a
+  future per-credential-type override but isn't read by the job yet (§13).
+- **Dedup**: each generated notification gets a `dedupe_key` --
+  `credential:<employeeCredentialId>:milestone:<days>:<recipientUserId>`
+  for expirations (from `notificationDedupeKey()` in
+  `packages/shared/src/notifications.ts`, with the recipient appended at
+  the app layer since one credential event fans out to several
+  recipient rows), or `employee:<id>:credential_type:<id>:missing:<recipientUserId>`
+  for a missing-documentation alert (fires once, ever, per recipient --
+  not on a schedule). Both are enforced by the unique index on
+  `(organization_id, dedupe_key)`, so re-running the job is always safe.
+- **Job**: `lib/notifications/runNightlyCheck.ts`, triggered via
+  `POST /api/cron/notify` (guarded by `CRON_SECRET`) -- runs every active
+  employee's required credentials through the same
+  `calculateCredentialStatus()` the dashboard uses, and creates a
+  notification (§13's templates in `lib/notifications/templates.ts`) for
+  every milestone/overdue/missing hit. An external scheduler (Railway
+  cron trigger or similar) needs to be pointed at that endpoint once
+  deployed -- nothing calls it on its own.
+- **Immediate notifications**: a successful renewal
+  (`renewCredentialAction`) sends a renewal-confirmation notification
+  right away rather than waiting for the nightly job, since that's tied
+  to a specific action a user just took.
 - **Channels**: `notifications.channel text[]` — `in_app` always;
-  `email` sent via a transactional provider from the same job;
-  `push`/`sms` columns and channel plumbing exist now so Expo push tokens
-  and Twilio can be added later without a schema change.
-- **Recipients**: Owner + Office Manager always eligible; Employee gets
-  their own; `notification_rules.notify_roles` configurable per rule.
+  `email` sent via Resend (`lib/email.ts`) when a notification is
+  genuinely new (never on a deduped re-insert); `push`/`sms` columns and
+  channel plumbing exist now so Expo push tokens and Twilio can be added
+  later without a schema change.
+- **Recipients**: Owner + Office Manager always eligible for every
+  credential belonging to their org; the employee themselves (via their
+  `organization_users.employee_id` link) for their own credentials.
 
 ## 9. Security Architecture
 
@@ -266,6 +286,7 @@ Nothing is ever deleted or overwritten — audits need the full history.
 /(app)/employees/[id]/edit
 /(app)/employees/[id]/credentials/[credentialTypeId]/renew
 /(app)/employees/[id]/credentials/[credentialTypeId]/override   Owner only, reason required (§7)
+/(app)/employees/[id]/credentials/[credentialTypeId]/documents   current + history, upload (§16/§17)
 /(app)/calendar                          day/week/month, color-coded
 /(app)/reports                           list of report types → filters → export
 /(app)/notifications
@@ -296,18 +317,32 @@ Employee-only mode: nav collapses to Home · My Credentials · Notifications · 
 
 ## 13. Development Phases
 
-1. Architecture, database, auth — **this change**
-2. Employee management (CRUD, search/filter, CSV import)
-3. Credential management (records, renewal workflow, documents)
-4. Compliance engine wiring (shared package → dashboard/report consumption)
-5. Dashboard + color-coded statuses, calendar
-6. Document management (versioning, signed URLs, mobile capture)
-7. Notifications (in-app, email templates, background job)
+1. ✅ Architecture, database, auth
+2. ✅ Employee management (CRUD, search/filter, CSV import)
+3. ✅ Credential management (records, renewal workflow, expiration override, credential-type/position admin)
+4. ✅ Compliance engine wiring (shared package → dashboard/employee-detail/calendar consumption)
+5. ✅ Dashboard + color-coded statuses; calendar (month/week/day, §11)
+6. ✅ Document management (Railway bucket storage, version history, upload validation — §16/§17)
+7. ✅ Notifications (in-app + email templates, idempotent nightly check, immediate renewal confirmations — §12-14)
 8. Reporting (CSV/PDF export)
 9. Mobile application (Expo)
 10. Testing hardening, security review, deployment prep
 
 Each phase ends with lint + typecheck + tests green before moving on.
+
+Known simplifications from Phases 5-7, worth revisiting:
+- The calendar and nightly check use each org's default compliance
+  thresholds/notification schedule; `notification_rules`' per-credential-type
+  override (distinct recipients per credential) isn't wired into the job
+  yet, only the per-credential-type warning-threshold override already
+  used everywhere else.
+- The nightly check (`lib/notifications/runNightlyCheck.ts`, triggered via
+  `POST /api/cron/notify`) reads across every organization, which needs a
+  Postgres connection that bypasses RLS (see `JOB_DATABASE_URL` in §14) --
+  wire up an actual scheduler (Railway cron trigger or similar) hitting
+  that endpoint once deployed; nothing calls it automatically yet.
+- Document upload only supports PDF/JPG/PNG from a browser file picker;
+  camera capture is a mobile-app concern (Phase 9).
 
 ## 14. Environment Variables / External Services
 
