@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { DEFAULT_CREDENTIAL_TYPES } from "@compliance/shared";
 import { withUserContext } from "@/lib/db/context";
 import { recordAuditLog } from "@/lib/audit";
@@ -19,11 +20,18 @@ export async function bootstrapOrganization(params: {
   ownerUserId: string;
 }): Promise<string> {
   return withUserContext(params.ownerUserId, async (client) => {
-    const orgResult = await client.query<{ id: string }>(
-      "INSERT INTO organizations (name, slug) VALUES ($1, $2) RETURNING id",
-      [params.organizationName, slugWithSuffix(params.organizationName)]
-    );
-    const organizationId = orgResult.rows[0].id;
+    // Generated here rather than left to the table's default and read back
+    // via RETURNING: at this point there's no membership row yet, so the
+    // organizations_select policy (is_org_member) can't see the new row --
+    // RETURNING would fail with "new row violates row-level security
+    // policy" even though the insert itself is allowed. Knowing the id
+    // upfront sidesteps needing to read it back at all.
+    const organizationId = randomUUID();
+    await client.query("INSERT INTO organizations (id, name, slug) VALUES ($1, $2, $3)", [
+      organizationId,
+      params.organizationName,
+      slugWithSuffix(params.organizationName),
+    ]);
 
     const roleResult = await client.query<{ id: string }>("SELECT id FROM roles WHERE key = 'owner'");
     const ownerRoleId = roleResult.rows[0]?.id;
