@@ -9,6 +9,7 @@ export interface SessionUser {
   id: string;
   email: string;
   fullName: string;
+  isPlatformAdmin: boolean;
 }
 
 function hashToken(token: string): string {
@@ -45,8 +46,8 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   if (!token) return null;
 
   const result = await withDb((client) =>
-    client.query<{ id: string; email: string; full_name: string }>(
-      `SELECT u.id, u.email, u.full_name
+    client.query<{ id: string; email: string; full_name: string; is_platform_admin: boolean }>(
+      `SELECT u.id, u.email, u.full_name, u.is_platform_admin
        FROM sessions s
        JOIN users u ON u.id = s.user_id
        WHERE s.token_hash = $1 AND s.expires_at > now()`,
@@ -57,7 +58,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   const row = result.rows[0];
   if (!row) return null;
 
-  return { id: row.id, email: row.email, fullName: row.full_name };
+  return { id: row.id, email: row.email, fullName: row.full_name, isPlatformAdmin: row.is_platform_admin };
 }
 
 /** Deletes the current session row (if any) and clears the cookie. */
