@@ -1,6 +1,7 @@
 import { requireOrgContext } from "@/lib/session";
 import { withUserContext } from "@/lib/db/context";
-import { NewEmployeeForm } from "./NewEmployeeForm";
+import { EmployeeForm } from "../EmployeeForm";
+import { createEmployeeAction } from "../actions";
 
 export default async function NewEmployeePage() {
   const ctx = await requireOrgContext();
@@ -22,7 +23,7 @@ export default async function NewEmployeePage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <h1 className="text-2xl font-semibold text-slate-900">Add Employee</h1>
-      <NewEmployeeForm positions={positions} departments={departments} />
+      <EmployeeForm action={createEmployeeAction} positions={positions} departments={departments} submitLabel="Save Employee" />
     </div>
   );
 }

@@ -16,7 +16,9 @@ export interface EmployeeWithCompliance {
   preferredName: string | null;
   dateOfHire: string;
   employmentStatus: string;
+  positionId: string | null;
   positionName: string | null;
+  departmentId: string | null;
   departmentName: string | null;
   compliance: EmployeeComplianceResult;
 }
@@ -51,11 +53,12 @@ async function loadRoster(
     employment_status: string;
     position_id: string | null;
     position_name: string | null;
+    department_id: string | null;
     department_name: string | null;
   }>(
     `SELECT e.id, e.employee_number, e.first_name, e.last_name, e.preferred_name,
             e.date_of_hire, e.employment_status, e.position_id,
-            p.name AS position_name, d.name AS department_name
+            p.name AS position_name, e.department_id, d.name AS department_name
      FROM employees e
      LEFT JOIN positions p ON p.id = e.position_id
      LEFT JOIN departments d ON d.id = e.department_id
@@ -85,7 +88,9 @@ async function loadRoster(
       preferredName: employee.preferred_name,
       dateOfHire: employee.date_of_hire,
       employmentStatus: employee.employment_status,
+      positionId: employee.position_id,
       positionName: employee.position_name,
+      departmentId: employee.department_id,
       departmentName: employee.department_name,
       compliance,
     };

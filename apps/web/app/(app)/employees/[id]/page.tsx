@@ -30,7 +30,14 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
             {employee.employeeNumber} · {employee.positionName ?? "No position"} · {employee.departmentName ?? "No department"}
           </p>
         </div>
-        <StatusBadge color={compliance.color} icon={compliance.icon} label={compliance.label} />
+        <div className="flex items-center gap-3">
+          {isAdmin && (
+            <Link href={`/employees/${employee.id}/edit`} className="text-sm font-medium text-brand-600 hover:underline">
+              Edit
+            </Link>
+          )}
+          <StatusBadge color={compliance.color} icon={compliance.icon} label={compliance.label} />
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
