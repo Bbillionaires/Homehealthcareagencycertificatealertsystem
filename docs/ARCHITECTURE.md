@@ -380,11 +380,15 @@ A Railway project ("homehealthcare-compliance") is now fully live:
   plus that role's own credentials, not a Railway reference to the owner
   string); `JOB_DATABASE_URL` is `${{Postgres.DATABASE_URL}}` (the owner
   connection, since the nightly cross-org notification job structurally
-  needs to bypass RLS); `CRON_SECRET` is set. `RESEND_API_KEY` and the
-  `RAILWAY_BUCKET_*` document-storage variables are still unset, so emails
-  log to the console instead of sending and the documents feature has no
-  bucket yet -- both are additive follow-ups, not required for the app to
-  run.
+  needs to bypass RLS); `CRON_SECRET` is set.
+- **documents** bucket (Railway Storage Bucket, region `sjc`), wired to the
+  web service's `RAILWAY_BUCKET_*` variables via Railway variable
+  references (`${{documents.ENDPOINT}}`, `${{documents.BUCKET}}`,
+  `${{documents.ACCESS_KEY_ID}}`, `${{documents.SECRET_ACCESS_KEY}}`,
+  `${{documents.REGION}}`), so Phase 6 document upload/download is live.
+  `RESEND_API_KEY` is still unset, so emails (password reset,
+  notifications) log to the console instead of sending -- an additive
+  follow-up, not required for the app to run.
 - A leftover `db-migrate` Railway Function (used to apply the above against
   the database, since Railway redacts `DATABASE_URL` from API/MCP access)
   is still present but idle -- its deletion needs approval that hasn't been
