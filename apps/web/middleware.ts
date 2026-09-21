@@ -40,7 +40,15 @@ export const config = {
      * Match all request paths except for the ones starting with:
      * - _next/static, _next/image (Next.js internals)
      * - favicon.ico, images, fonts
+     * - api/ -- API routes authenticate themselves (getSessionUser,
+     *   requireOrgContext, or their own secret check, e.g.
+     *   /api/cron/notify's CRON_SECRET). Redirecting an unauthenticated
+     *   API request to /login here, before it ever reaches the route
+     *   handler, silently breaks any endpoint meant to be called by
+     *   something other than a signed-in browser -- a cron job, or
+     *   /api/client-error's crash beacon from the login page itself,
+     *   where there is by definition no session cookie yet.
      */
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };
