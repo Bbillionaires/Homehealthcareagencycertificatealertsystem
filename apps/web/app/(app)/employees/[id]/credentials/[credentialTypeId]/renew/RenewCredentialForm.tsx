@@ -87,7 +87,7 @@ export function RenewCredentialForm({
 
       {requiresDocument && (
         <p className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-500">
-          Document upload (camera / file, with version history) is part of the document-management phase and isn&apos;t wired up yet — save the dates now and attach the certificate once that lands.
+          This credential requires a document. Save the dates here first, then use the &ldquo;Documents&rdquo; link on the employee&apos;s profile to upload the certificate (or a photo of it) — admins and the employee can both download it later.
         </p>
       )}
 

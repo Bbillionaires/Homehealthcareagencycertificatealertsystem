@@ -68,23 +68,34 @@ async function loadEmployeeDetail(client: PoolClient, organizationId: string, em
       }
     : DEFAULT_COMPLIANCE_THRESHOLDS;
 
-  const requirementResult = employeeRow.position_id
-    ? await client.query<{
-        is_required: boolean;
-        credential_type_id: string;
-        credential_type_name: string;
-        requires_document: boolean;
-        warning_yellow_threshold_days: number | null;
-        warning_orange_threshold_days: number | null;
-      }>(
-        `SELECT pr.is_required, pr.credential_type_id, ct.name AS credential_type_name, ct.requires_document,
-                ct.warning_yellow_threshold_days, ct.warning_orange_threshold_days
-         FROM position_requirements pr
-         JOIN credential_types ct ON ct.id = pr.credential_type_id
-         WHERE pr.organization_id = $1 AND pr.position_id = $2 AND ct.is_active`,
-        [organizationId, employeeRow.position_id]
-      )
-    : { rows: [] as never[] };
+  // Every active credential type in the org's catalog, not just the ones
+  // tied to this employee's position: an admin can track/renew/upload any
+  // credential for any employee (the renew/documents routes only ever
+  // needed employeeId + credentialTypeId, never a position_requirements
+  // row), and someone with no position assigned -- or a position with no
+  // configured requirements -- must still have somewhere to add one.
+  // is_required (and its per-type threshold overrides) only comes through
+  // when this credential type IS one of the employee's position's
+  // requirements; the left join simply never matches when position_id is
+  // null, so is_required correctly defaults to false for them.
+  const requirementResult = await client.query<{
+    is_required: boolean;
+    credential_type_id: string;
+    credential_type_name: string;
+    requires_document: boolean;
+    warning_yellow_threshold_days: number | null;
+    warning_orange_threshold_days: number | null;
+  }>(
+    `SELECT coalesce(pr.is_required, false) AS is_required, ct.id AS credential_type_id,
+            ct.name AS credential_type_name, ct.requires_document,
+            ct.warning_yellow_threshold_days, ct.warning_orange_threshold_days
+     FROM credential_types ct
+     LEFT JOIN position_requirements pr
+       ON pr.credential_type_id = ct.id AND pr.organization_id = ct.organization_id AND pr.position_id = $2
+     WHERE ct.organization_id = $1 AND ct.is_active
+     ORDER BY ct.sort_order`,
+    [organizationId, employeeRow.position_id]
+  );
 
   const activeResult = await client.query<{
     id: string;

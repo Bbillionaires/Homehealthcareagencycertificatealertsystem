@@ -13,7 +13,7 @@ interface DocumentRow {
   mime_type: string;
   size_bytes: number;
   is_current: boolean;
-  uploaded_at: string;
+  uploaded_at: Date;
   uploaded_by_name: string | null;
   credential_status: "active" | "archived";
 }
@@ -155,7 +155,7 @@ function DocumentRowView({
           <span className="text-sm font-medium text-slate-500">{doc.file_name}</span>
         )}
         <p className="text-xs text-slate-500">
-          {(doc.size_bytes / 1024).toFixed(0)} KB · uploaded {formatDateLong(doc.uploaded_at.slice(0, 10))}
+          {(doc.size_bytes / 1024).toFixed(0)} KB · uploaded {formatDateLong(doc.uploaded_at.toISOString().slice(0, 10))}
           {doc.uploaded_by_name ? ` by ${doc.uploaded_by_name}` : ""}
         </p>
       </div>

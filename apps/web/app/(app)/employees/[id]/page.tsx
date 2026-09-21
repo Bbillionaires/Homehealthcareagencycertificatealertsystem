@@ -67,7 +67,20 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
           <h2 className="text-base font-semibold text-slate-900">Training & Credentials</h2>
         </div>
         {credentials.length === 0 ? (
-          <p className="p-5 text-sm text-slate-500">This position has no configured credential requirements yet.</p>
+          <p className="p-5 text-sm text-slate-500">
+            No credential types exist yet.{" "}
+            {isAdmin ? (
+              <>
+                Add one in{" "}
+                <Link href="/settings/credential-types" className="text-brand-600 hover:underline">
+                  Settings → Credential Types
+                </Link>
+                , then come back here to record dates and documents for this employee.
+              </>
+            ) : (
+              "Ask an admin to configure the credential catalog."
+            )}
+          </p>
         ) : (
           <table className="w-full text-left text-sm">
             <thead className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
