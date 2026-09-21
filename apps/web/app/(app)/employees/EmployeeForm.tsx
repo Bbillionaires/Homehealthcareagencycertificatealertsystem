@@ -1,7 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { useFormState } from "react-dom";
 import type { ActionResult } from "./actions";
+import { voiceFillEmployeeAction } from "./voiceActions";
+import { VoiceCaptureButton } from "@/components/VoiceCaptureButton";
 
 const initialState: ActionResult = {};
 
@@ -20,6 +23,8 @@ export interface EmployeeFormValues {
   notes?: string;
 }
 
+const EMPLOYMENT_STATUSES = ["active", "leave", "inactive", "terminated"];
+
 export function EmployeeForm({
   action,
   positions,
@@ -36,51 +41,136 @@ export function EmployeeForm({
   submitLabel: string;
 }) {
   const [state, formAction] = useFormState(action, initialState);
+  const [values, setValues] = useState<EmployeeFormValues>({
+    employmentStatus: "active",
+    ...defaultValues,
+  });
+  const [transcript, setTranscript] = useState<string | null>(null);
+
+  function set<K extends keyof EmployeeFormValues>(key: K, value: EmployeeFormValues[K]) {
+    setValues((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function handleVoiceRecording(blob: Blob) {
+    const formData = new FormData();
+    formData.set("audio", blob, "recording.webm");
+    const result = await voiceFillEmployeeAction(formData);
+    if (result.error) throw new Error(result.error);
+    setTranscript(result.transcript);
+    const fields = { ...result.fields };
+    if (fields.employmentStatus) {
+      const normalized = fields.employmentStatus.toLowerCase();
+      fields.employmentStatus = EMPLOYMENT_STATUSES.includes(normalized) ? normalized : undefined;
+    }
+    setValues((prev) => ({
+      ...prev,
+      ...Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined && v !== "")),
+    }));
+  }
 
   return (
     <form action={formAction} className="space-y-5 rounded-xl border border-slate-200 bg-white p-6">
       {employeeId && <input type="hidden" name="employeeId" value={employeeId} />}
+
+      <div className="rounded-md bg-slate-50 p-3">
+        <VoiceCaptureButton onAudioReady={handleVoiceRecording} label="Fill this form by voice" />
+        {transcript && <p className="mt-2 text-xs text-slate-500">Heard: &ldquo;{transcript}&rdquo;</p>}
+      </div>
+
       <div className="grid grid-cols-2 gap-4">
-        <TextField name="employeeNumber" label="Employee ID" required defaultValue={defaultValues?.employeeNumber} />
-        <DateField name="dateOfHire" label="Date of Hire" required defaultValue={defaultValues?.dateOfHire} />
+        <TextField
+          name="employeeNumber"
+          label="Employee ID"
+          required
+          value={values.employeeNumber ?? ""}
+          onChange={(v) => set("employeeNumber", v)}
+        />
+        <DateField
+          name="dateOfHire"
+          label="Date of Hire"
+          required
+          value={values.dateOfHire ?? ""}
+          onChange={(v) => set("dateOfHire", v)}
+        />
       </div>
       <div className="grid grid-cols-3 gap-4">
-        <TextField name="firstName" label="First Name" required defaultValue={defaultValues?.firstName} />
-        <TextField name="middleName" label="Middle Name" defaultValue={defaultValues?.middleName} />
-        <TextField name="lastName" label="Last Name" required defaultValue={defaultValues?.lastName} />
+        <TextField
+          name="firstName"
+          label="First Name"
+          required
+          value={values.firstName ?? ""}
+          onChange={(v) => set("firstName", v)}
+        />
+        <TextField
+          name="middleName"
+          label="Middle Name"
+          value={values.middleName ?? ""}
+          onChange={(v) => set("middleName", v)}
+        />
+        <TextField
+          name="lastName"
+          label="Last Name"
+          required
+          value={values.lastName ?? ""}
+          onChange={(v) => set("lastName", v)}
+        />
       </div>
-      <TextField name="preferredName" label="Preferred Name" defaultValue={defaultValues?.preferredName} />
+      <TextField
+        name="preferredName"
+        label="Preferred Name"
+        value={values.preferredName ?? ""}
+        onChange={(v) => set("preferredName", v)}
+      />
       <div className="grid grid-cols-2 gap-4">
         <SelectField
           name="positionId"
           label="Position"
           options={positions}
           placeholder="Select a position"
-          defaultValue={defaultValues?.positionId}
+          value={values.positionId ?? ""}
+          onChange={(v) => set("positionId", v)}
         />
         <SelectField
           name="departmentId"
           label="Department"
           options={departments}
           placeholder="Select a department"
-          defaultValue={defaultValues?.departmentId}
+          value={values.departmentId ?? ""}
+          onChange={(v) => set("departmentId", v)}
         />
       </div>
       <div className="grid grid-cols-2 gap-4">
-        <TextField name="phone" label="Phone" type="tel" defaultValue={defaultValues?.phone} />
-        <TextField name="email" label="Email" type="email" defaultValue={defaultValues?.email} />
+        <TextField
+          name="phone"
+          label="Phone"
+          type="tel"
+          value={values.phone ?? ""}
+          onChange={(v) => set("phone", v)}
+        />
+        <TextField
+          name="email"
+          label="Email"
+          type="email"
+          value={values.email ?? ""}
+          onChange={(v) => set("email", v)}
+        />
       </div>
       <div>
-        <label className="block text-sm font-medium text-slate-700">Employment Status</label>
+        <label htmlFor="employmentStatus" className="block text-sm font-medium text-slate-700">
+          Employment Status
+        </label>
         <select
+          id="employmentStatus"
           name="employmentStatus"
-          defaultValue={defaultValues?.employmentStatus ?? "active"}
+          value={values.employmentStatus ?? "active"}
+          onChange={(e) => set("employmentStatus", e.target.value)}
           className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
         >
-          <option value="active">Active</option>
-          <option value="leave">Leave</option>
-          <option value="inactive">Inactive</option>
-          <option value="terminated">Terminated</option>
+          {EMPLOYMENT_STATUSES.map((s) => (
+            <option key={s} value={s}>
+              {s.charAt(0).toUpperCase() + s.slice(1)}
+            </option>
+          ))}
         </select>
       </div>
       <div>
@@ -91,7 +181,8 @@ export function EmployeeForm({
           id="notes"
           name="notes"
           rows={3}
-          defaultValue={defaultValues?.notes}
+          value={values.notes ?? ""}
+          onChange={(e) => set("notes", e.target.value)}
           className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
         />
       </div>
@@ -114,13 +205,15 @@ function TextField({
   label,
   required,
   type = "text",
-  defaultValue,
+  value,
+  onChange,
 }: {
   name: string;
   label: string;
   required?: boolean;
   type?: string;
-  defaultValue?: string;
+  value: string;
+  onChange: (value: string) => void;
 }) {
   return (
     <div>
@@ -132,7 +225,8 @@ function TextField({
         name={name}
         type={type}
         required={required}
-        defaultValue={defaultValue}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
         className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
       />
     </div>
@@ -143,14 +237,16 @@ function DateField({
   name,
   label,
   required,
-  defaultValue,
+  value,
+  onChange,
 }: {
   name: string;
   label: string;
   required?: boolean;
-  defaultValue?: string;
+  value: string;
+  onChange: (value: string) => void;
 }) {
-  return <TextField name={name} label={label} required={required} type="date" defaultValue={defaultValue} />;
+  return <TextField name={name} label={label} required={required} type="date" value={value} onChange={onChange} />;
 }
 
 function SelectField({
@@ -158,13 +254,15 @@ function SelectField({
   label,
   options,
   placeholder,
-  defaultValue,
+  value,
+  onChange,
 }: {
   name: string;
   label: string;
   options: { id: string; name: string }[];
   placeholder: string;
-  defaultValue?: string;
+  value: string;
+  onChange: (value: string) => void;
 }) {
   return (
     <div>
@@ -174,7 +272,8 @@ function SelectField({
       <select
         id={name}
         name={name}
-        defaultValue={defaultValue ?? ""}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
         className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
       >
         <option value="">{placeholder}</option>

@@ -44,7 +44,12 @@ export default async function RenewCredentialPage({
             : " · does not expire once completed"}
         </p>
       </div>
-      <RenewCredentialForm employeeId={employee.id} credentialTypeId={credentialType.id} requiresDocument={credentialType.requires_document} />
+      <RenewCredentialForm
+        employeeId={employee.id}
+        credentialTypeId={credentialType.id}
+        credentialTypeName={credentialType.name}
+        requiresDocument={credentialType.requires_document}
+      />
     </div>
   );
 }

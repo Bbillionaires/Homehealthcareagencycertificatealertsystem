@@ -32,7 +32,7 @@ export default async function CredentialDocumentsPage({
     redirect("/dashboard");
   }
 
-  const { employee, credentialType, documents, hasActiveRecord } = await withUserContext(ctx.userId, async (client) => {
+  const { employee, credentialType, documents, activeRecord } = await withUserContext(ctx.userId, async (client) => {
     const [employeeResult, credentialTypeResult, documentsResult] = await Promise.all([
       client.query<{ id: string; first_name: string; last_name: string }>(
         "SELECT id, first_name, last_name FROM employees WHERE id = $1 AND organization_id = $2",
@@ -54,8 +54,9 @@ export default async function CredentialDocumentsPage({
       ),
     ]);
 
-    const activeCheck = await client.query(
-      `SELECT id FROM employee_credentials WHERE employee_id = $1 AND credential_type_id = $2 AND organization_id = $3 AND status = 'active'`,
+    const activeCheck = await client.query<{ id: string; completion_date: string | null; expiration_date: string | null }>(
+      `SELECT id, completion_date, expiration_date FROM employee_credentials
+       WHERE employee_id = $1 AND credential_type_id = $2 AND organization_id = $3 AND status = 'active'`,
       [id, credentialTypeId, ctx.organizationId]
     );
 
@@ -63,7 +64,7 @@ export default async function CredentialDocumentsPage({
       employee: employeeResult.rows[0] ?? null,
       credentialType: credentialTypeResult.rows[0] ?? null,
       documents: documentsResult.rows,
-      hasActiveRecord: activeCheck.rows.length > 0,
+      activeRecord: activeCheck.rows[0] ?? null,
     };
   });
 
@@ -127,8 +128,15 @@ export default async function CredentialDocumentsPage({
         )}
       </section>
 
-      {hasActiveRecord ? (
-        <UploadDocumentForm employeeId={id} credentialTypeId={credentialTypeId} disabled={!storageConfigured} />
+      {activeRecord ? (
+        <UploadDocumentForm
+          employeeId={id}
+          credentialTypeId={credentialTypeId}
+          employeeCredentialId={activeRecord.id}
+          currentCompletionDate={activeRecord.completion_date}
+          currentExpirationDate={activeRecord.expiration_date}
+          disabled={!storageConfigured}
+        />
       ) : (
         <p className="rounded-md bg-slate-50 px-4 py-3 text-sm text-slate-500">
           Add a completion date for this credential (Renew/Add on the employee&apos;s profile) before attaching a
