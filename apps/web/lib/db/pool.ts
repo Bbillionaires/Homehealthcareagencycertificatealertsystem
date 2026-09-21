@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import "./pgTypeParsers";
 
 declare global {
   // eslint-disable-next-line no-var
