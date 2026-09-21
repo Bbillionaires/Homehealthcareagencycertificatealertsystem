@@ -2,6 +2,7 @@ import { daysBetween, formatDateLong, todayIso } from "./dates";
 import {
   CREDENTIAL_STATUS_SEVERITY,
   STATUS_PRESENTATION,
+  NOT_APPLICABLE_PRESENTATION,
   DEFAULT_COMPLIANCE_THRESHOLDS,
   type ComplianceThresholds,
   type CredentialRecordInput,
@@ -99,7 +100,26 @@ export function calculateEmployeeCompliance(
   const requiredResults = results.filter((r) => r.isRequired);
   const currentCount = requiredResults.filter((r) => r.status === "CURRENT").length;
   const requiredCount = requiredResults.length;
-  const completionPercentage = requiredCount === 0 ? 100 : Math.round((currentCount / requiredCount) * 100);
+
+  // Zero mandatory requirements (no position assigned, or a position with
+  // no configured requirements) is NOT the same thing as "verified
+  // compliant" -- there is nothing to be measured against, so it must
+  // never render as a green "Current" badge. See NOT_APPLICABLE_PRESENTATION.
+  if (requiredCount === 0) {
+    return {
+      overallStatus: NOT_APPLICABLE_PRESENTATION.status,
+      color: NOT_APPLICABLE_PRESENTATION.color,
+      icon: NOT_APPLICABLE_PRESENTATION.icon,
+      label: NOT_APPLICABLE_PRESENTATION.label,
+      completionPercentage: 0,
+      requiredCount: 0,
+      currentCount: 0,
+      results,
+      reasons: [],
+    };
+  }
+
+  const completionPercentage = Math.round((currentCount / requiredCount) * 100);
 
   const overall = requiredResults.reduce<CredentialStatusResult | null>((worst, current) => {
     if (!worst) return current;

@@ -19,7 +19,7 @@ export function StatusBadge({
   label,
 }: {
   color: ComplianceColor;
-  icon: "check-circle" | "clock" | "alert-triangle" | "x-circle" | "help-circle";
+  icon: "check-circle" | "clock" | "alert-triangle" | "x-circle" | "help-circle" | "minus-circle";
   label: string;
 }) {
   return (

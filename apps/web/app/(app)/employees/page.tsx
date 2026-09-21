@@ -3,7 +3,7 @@ import { requireOrgContext } from "@/lib/session";
 import { getOrgComplianceRoster } from "@/lib/data/compliance";
 import { withUserContext } from "@/lib/db/context";
 import { StatusBadge } from "@/components/StatusBadge";
-import type { CredentialStatusKey } from "@compliance/shared";
+import type { OverallStatusKey } from "@compliance/shared";
 
 export default async function EmployeesPage({
   searchParams,
@@ -41,7 +41,7 @@ export default async function EmployeesPage({
   ]);
 
   const query = (params.q ?? "").trim().toLowerCase();
-  const statusFilter = params.status as CredentialStatusKey | undefined;
+  const statusFilter = params.status as OverallStatusKey | undefined;
 
   const filtered = roster.filter((employee) => {
     const matchesQuery =
@@ -136,6 +136,7 @@ export default async function EmployeesPage({
           <option value="URGENT">Urgent</option>
           <option value="EXPIRED">Expired</option>
           <option value="MISSING">Missing</option>
+          <option value="NOT_APPLICABLE">No Requirements Assigned</option>
         </select>
         <label className="flex items-center gap-2 text-sm text-slate-600">
           <input type="checkbox" name="includeInactive" value="1" defaultChecked={includeInactive} />
@@ -174,7 +175,15 @@ export default async function EmployeesPage({
                   <td className="px-4 py-3 text-slate-500">{employee.departmentName ?? "—"}</td>
                   <td className="px-4 py-3 capitalize text-slate-500">{employee.employmentStatus}</td>
                   <td className="px-4 py-3">
-                    <StatusBadge color={employee.compliance.color} icon={employee.compliance.icon} label={`${employee.compliance.label} (${employee.compliance.completionPercentage}%)`} />
+                    <StatusBadge
+                      color={employee.compliance.color}
+                      icon={employee.compliance.icon}
+                      label={
+                        employee.compliance.overallStatus === "NOT_APPLICABLE"
+                          ? employee.compliance.label
+                          : `${employee.compliance.label} (${employee.compliance.completionPercentage}%)`
+                      }
+                    />
                   </td>
                 </tr>
               ))}

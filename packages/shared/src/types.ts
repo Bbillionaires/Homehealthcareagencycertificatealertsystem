@@ -25,6 +25,18 @@ export const CREDENTIAL_STATUS_SEVERITY: Record<CredentialStatusKey, number> = {
 
 export type ComplianceColor = "green" | "yellow" | "orange" | "red" | "gray";
 
+/**
+ * An employee's overall roll-up status is either one of the real
+ * per-credential statuses above (driven by their worst mandatory
+ * credential), or NOT_APPLICABLE when they have zero mandatory
+ * requirements to be measured against at all (no position assigned, or a
+ * position with no configured requirements). NOT_APPLICABLE must never be
+ * presented the same as CURRENT — "nothing to check" is not "verified
+ * compliant" — so it's a distinct status with its own gray/neutral
+ * presentation, never produced by calculateCredentialStatus itself.
+ */
+export type OverallStatusKey = CredentialStatusKey | "NOT_APPLICABLE";
+
 export interface StatusPresentation {
   status: CredentialStatusKey;
   color: ComplianceColor;
@@ -39,6 +51,20 @@ export const STATUS_PRESENTATION: Record<CredentialStatusKey, StatusPresentation
   URGENT: { status: "URGENT", color: "orange", icon: "alert-triangle", label: "Urgent" },
   EXPIRED: { status: "EXPIRED", color: "red", icon: "x-circle", label: "Expired" },
   MISSING: { status: "MISSING", color: "gray", icon: "help-circle", label: "Missing" },
+};
+
+export interface OverallStatusPresentation {
+  status: OverallStatusKey;
+  color: ComplianceColor;
+  icon: StatusPresentation["icon"] | "minus-circle";
+  label: string;
+}
+
+export const NOT_APPLICABLE_PRESENTATION: OverallStatusPresentation = {
+  status: "NOT_APPLICABLE",
+  color: "gray",
+  icon: "minus-circle",
+  label: "No Requirements Assigned",
 };
 
 export interface ComplianceThresholds {
@@ -86,9 +112,9 @@ export interface CredentialStatusResult extends StatusPresentation {
 }
 
 export interface EmployeeComplianceResult {
-  overallStatus: CredentialStatusKey;
+  overallStatus: OverallStatusKey;
   color: ComplianceColor;
-  icon: StatusPresentation["icon"];
+  icon: OverallStatusPresentation["icon"];
   label: string;
   completionPercentage: number;
   requiredCount: number;

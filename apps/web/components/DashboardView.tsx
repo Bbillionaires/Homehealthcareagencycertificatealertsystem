@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { StatusBadge } from "@/components/StatusBadge";
-import { STATUS_PRESENTATION } from "@compliance/shared";
 import type { EmployeeWithCompliance, DashboardCounts } from "@/lib/data/compliance";
 
 const CARDS: {
@@ -15,6 +14,7 @@ const CARDS: {
   { key: "urgent", label: "Urgent", status: "URGENT", accent: "border-compliance-orange-ring" },
   { key: "expired", label: "Expired / Non-Compliant", status: "EXPIRED", accent: "border-compliance-red-ring" },
   { key: "missingDocumentation", label: "Missing Documentation", status: "MISSING", accent: "border-compliance-gray-ring" },
+  { key: "notApplicable", label: "No Requirements Assigned", status: "NOT_APPLICABLE", accent: "border-slate-200" },
 ];
 
 /**
@@ -40,7 +40,9 @@ export function DashboardView({
   counts: DashboardCounts;
   employeesHref: string;
 }) {
-  const nonCompliant = roster.filter((e) => e.compliance.overallStatus !== "CURRENT");
+  const nonCompliant = roster.filter(
+    (e) => e.compliance.overallStatus !== "CURRENT" && e.compliance.overallStatus !== "NOT_APPLICABLE"
+  );
   const upcoming = roster
     .flatMap((e) =>
       e.compliance.results
@@ -106,7 +108,7 @@ export function DashboardView({
                     <Link href={`/employees/${employee.id}`} className="text-sm font-medium text-slate-900 hover:underline">
                       {employee.firstName} {employee.lastName}
                     </Link>
-                    <p className="text-xs text-slate-500">{employee.compliance.reasons[0] ?? STATUS_PRESENTATION[employee.compliance.overallStatus].label}</p>
+                    <p className="text-xs text-slate-500">{employee.compliance.reasons[0] ?? employee.compliance.label}</p>
                   </div>
                   <StatusBadge color={employee.compliance.color} icon={employee.compliance.icon} label={employee.compliance.label} />
                 </li>

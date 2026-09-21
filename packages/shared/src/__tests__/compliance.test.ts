@@ -150,9 +150,13 @@ describe("calculateEmployeeCompliance", () => {
     expect(result.completionPercentage).toBe(100);
   });
 
-  it("is vacuously compliant when an employee's position has no requirements", () => {
+  it("is NOT_APPLICABLE, never CURRENT, when an employee has zero requirements to be measured against", () => {
+    // No assigned position, or a position with no configured requirements,
+    // must never render as a green "Current"/100% badge -- there's nothing
+    // that's actually been verified.
     const result = calculateEmployeeCompliance([], [], DEFAULT_COMPLIANCE_THRESHOLDS, TODAY);
-    expect(result.overallStatus).toBe("CURRENT");
-    expect(result.completionPercentage).toBe(100);
+    expect(result.overallStatus).toBe("NOT_APPLICABLE");
+    expect(result.color).toBe("gray");
+    expect(result.reasons).toHaveLength(0);
   });
 });

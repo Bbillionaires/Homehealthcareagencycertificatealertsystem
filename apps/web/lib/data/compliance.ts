@@ -28,11 +28,11 @@ export interface EmployeeWithCompliance {
  * roll-up. Terminated and inactive employees are excluded by default (they
  * still exist for historical search, just not in active compliance views).
  *
- * Pass `workspaceId` to scope to one industry workspace's positions
- * (an employee with no position in that workspace has no requirements
- * and shows as fully compliant, same as an employee with no position at
- * all today); omit it for the org-wide "All Workspaces" view, which is
- * every page's default until Phase 2's per-workspace pages exist.
+ * Pass `workspaceId` to scope to one industry workspace's positions (an
+ * employee with no position in that workspace has no requirements and
+ * shows as NOT_APPLICABLE -- "no requirements to check", never presented
+ * as verified-compliant); omit it for the org-wide "All Workspaces" view,
+ * which is every page's default until Phase 2's per-workspace pages exist.
  */
 export async function getOrgComplianceRoster(
   userId: string,
@@ -199,6 +199,7 @@ export interface DashboardCounts {
   urgent: number;
   expired: number;
   missingDocumentation: number;
+  notApplicable: number;
 }
 
 export function summarizeRoster(roster: EmployeeWithCompliance[]): DashboardCounts {
@@ -209,6 +210,7 @@ export function summarizeRoster(roster: EmployeeWithCompliance[]): DashboardCoun
     urgent: 0,
     expired: 0,
     missingDocumentation: 0,
+    notApplicable: 0,
   };
 
   for (const employee of roster) {
@@ -227,6 +229,9 @@ export function summarizeRoster(roster: EmployeeWithCompliance[]): DashboardCoun
         break;
       case "MISSING":
         counts.missingDocumentation += 1;
+        break;
+      case "NOT_APPLICABLE":
+        counts.notApplicable += 1;
         break;
     }
   }
